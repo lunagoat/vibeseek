@@ -591,6 +591,8 @@ struct Job {
     limiter: Limiter,
     total: usize,
     counter: Mutex<usize>,
+    /// Consecutive searches with zero responses (connection-health heuristic).
+    empty_streak: Mutex<usize>,
 }
 
 impl Job {
@@ -646,11 +648,52 @@ impl Job {
         println!("{pad}\x1b[{color}m{sym}\x1b[0m {}  \x1b[2m{detail}\x1b[0m", row.label());
     }
 
+    /// Block until slskd is logged in to Soulseek (a VPN drop disconnects it for a while).
+    async fn wait_online(&self) {
+        let mut warned = false;
+        loop {
+            match self.client.application().await {
+                Ok(a) if a.server.is_logged_in => {
+                    if warned {
+                        println!("    \x1b[32m●\x1b[0m reconnected to Soulseek, continuing");
+                    }
+                    return;
+                }
+                _ => {
+                    if !warned {
+                        println!("    \x1b[33m●\x1b[0m Soulseek disconnected (VPN drop?) — waiting to reconnect…");
+                        warned = true;
+                    }
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+    }
+
+    /// Search, guarding against a dead connection: one empty result is normal (obscure song),
+    /// but several in a row means slskd's connection died before it noticed. In that case pause
+    /// and retry the same query instead of reporting songs as not found.
     async fn search(&self, q: &str) -> Result<Vec<SearchResponse>> {
-        self.limiter.acquire().await;
-        Ok(crate::search::run(&self.client, &self.cfg, q, |_, _| {})
-            .await?
-            .responses)
+        for _ in 0..5 {
+            self.wait_online().await;
+            self.limiter.acquire().await;
+            let responses = crate::search::run(&self.client, &self.cfg, q, |_, _| {}).await?.responses;
+            if !responses.is_empty() {
+                *self.empty_streak.lock().unwrap() = 0;
+                return Ok(responses);
+            }
+            let streak = {
+                let mut s = self.empty_streak.lock().unwrap();
+                *s += 1;
+                *s
+            };
+            if streak < 3 {
+                return Ok(responses);
+            }
+            println!("    \x1b[33m●\x1b[0m {streak} searches in a row came back empty — connection problem? pausing 60s");
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+        Ok(vec![])
     }
 
     /// Candidates in preference order, plus how many matches were rejected only by quality
@@ -1105,6 +1148,7 @@ pub async fn run(cfg: &Config, args: CsvArgs) -> Result<()> {
         },
         total: todo.len(),
         counter: Mutex::new(0),
+        empty_streak: Mutex::new(0),
     });
 
     let done_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
