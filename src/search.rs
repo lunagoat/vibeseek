@@ -35,7 +35,16 @@ pub async fn run(client: &Client, cfg: &Config, text: &str, mut progress: impl F
     }
     // Don't delete the search: slskd finalizes it after reporting completion and logs errors if
     // it's gone. slskd.yml sets a short search retention instead.
-    let responses = client.search_responses(s.id).await?;
+    // A cancelled search's responses are saved a moment after the state flips, so an immediate
+    // fetch can come back empty. If slskd says there are responses, wait for them.
+    let mut responses = client.search_responses(s.id).await?;
+    for _ in 0..20 {
+        if !responses.is_empty() || client.get_search(s.id).await?.response_count == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        responses = client.search_responses(s.id).await?;
+    }
     Ok(SearchOutcome { responses })
 }
 
