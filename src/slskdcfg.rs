@@ -12,15 +12,9 @@ fn load(path: &Path) -> Result<Value> {
 
 fn save(path: &Path, v: &Value) -> Result<()> {
     let text = format!("# Managed by vibeseek (edit freely; slskd reloads on change)\n{}", serde_yaml::to_string(v)?);
-    // Write atomically so slskd never reads a half-written file.
-    let tmp = path.with_extension("yml.tmp");
-    std::fs::write(&tmp, text)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-    }
-    std::fs::rename(&tmp, path)?;
+    // Write in place: slskd's file watcher reacts to modifications but not to a file being
+    // replaced by rename, so an atomic temp-file swap would never be picked up.
+    std::fs::write(path, text)?;
     Ok(())
 }
 

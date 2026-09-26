@@ -33,9 +33,9 @@ pub async fn run(client: &Client, cfg: &Config, text: &str, mut progress: impl F
     if !state.starts_with("Completed") {
         let _ = client.stop_search(s.id).await;
     }
+    // Don't delete the search: slskd finalizes it after reporting completion and logs errors if
+    // it's gone. slskd.yml sets a short search retention instead.
     let responses = client.search_responses(s.id).await?;
-    // Keep slskd's search list tidy; results live in our cache.
-    let _ = client.delete_search(s.id).await;
     Ok(SearchOutcome { responses })
 }
 

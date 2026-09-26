@@ -312,9 +312,6 @@ impl Client {
         self.raw(Method::PUT, &format!("/searches/{id}"), None).await.map(|_| ())
     }
 
-    pub async fn delete_search(&self, id: Uuid) -> Result<()> {
-        self.raw(Method::DELETE, &format!("/searches/{id}"), None).await.map(|_| ())
-    }
 
     /// Enqueue downloads from one user. `destination` is relative to slskd's downloads dir.
     /// Returns the batch id and any per-file failure messages.
