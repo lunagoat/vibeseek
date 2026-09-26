@@ -649,7 +649,7 @@ impl Job {
     }
 
     /// Block until slskd is logged in to Soulseek (a VPN drop disconnects it for a while).
-    async fn wait_online(&self) {
+    async fn wait_online(&self) -> Result<()> {
         let mut warned = false;
         loop {
             match self.client.application().await {
@@ -657,8 +657,10 @@ impl Job {
                     if warned {
                         println!("    \x1b[32m●\x1b[0m reconnected to Soulseek, continuing");
                     }
-                    return;
+                    return Ok(());
                 }
+                // Anything but "logged out" or "slskd restarting" is a real error; don't wait on it.
+                Err(e) if !e.to_string().contains("can't reach slskd") => return Err(e),
                 _ => {
                     if !warned {
                         println!("    \x1b[33m●\x1b[0m Soulseek disconnected (VPN drop?) — waiting to reconnect…");
@@ -675,7 +677,7 @@ impl Job {
     /// and retry the same query instead of reporting songs as not found.
     async fn search(&self, q: &str) -> Result<Vec<SearchResponse>> {
         for _ in 0..5 {
-            self.wait_online().await;
+            self.wait_online().await?;
             self.limiter.acquire().await;
             let responses = crate::search::run(&self.client, &self.cfg, q, |_, _| {}).await?.responses;
             if !responses.is_empty() {

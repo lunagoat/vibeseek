@@ -57,12 +57,23 @@ fn install() -> Result<()> {
 }
 
 async fn run_loop(cfg: &Config) -> Result<()> {
-    let client = Client::new(cfg)?;
     let history = History::open().context("opening history db")?;
     let mut last_port_check = Instant::now() - Duration::from_secs(3600);
     let mut last_port_err = String::new();
     eprintln!("vibeseek agent running");
     loop {
+        // Rebuilt each cycle so a changed API key in slskd.yml is picked up without a restart.
+        let client = match Client::new(cfg) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("slskd config: {e:#}");
+                tokio::time::sleep(Duration::from_secs(15)).await;
+                continue;
+            }
+        };
+        if let Err(e) = crate::slskdcfg::ensure_dirs(&cfg.slskd_yml()) {
+            eprintln!("{e:#}");
+        }
         if cfg.port.auto && last_port_check.elapsed() >= Duration::from_secs(45) {
             last_port_check = Instant::now();
             // natpmpc blocks for a moment; keep it off the async threads.

@@ -10,8 +10,21 @@ fn load(path: &Path) -> Result<Value> {
     Ok(serde_yaml::from_str(&text)?)
 }
 
+/// slskd rejects its entire config on reload (breaking the API and search replies) if a
+/// configured directory is missing, and it can prune its own empty download folders.
+pub fn ensure_dirs(path: &Path) -> Result<()> {
+    let v = load(path)?;
+    for key in ["downloads", "incomplete"] {
+        if let Some(d) = get(&v, &["directories", key]).and_then(|d| d.as_str()) {
+            std::fs::create_dir_all(d).with_context(|| format!("creating slskd {key} dir {d}"))?;
+        }
+    }
+    Ok(())
+}
+
 fn save(path: &Path, v: &Value) -> Result<()> {
     let text = format!("# Managed by vibeseek (edit freely; slskd reloads on change)\n{}", serde_yaml::to_string(v)?);
+    ensure_dirs(path)?;
     // Write in place: slskd's file watcher reacts to modifications but not to a file being
     // replaced by rename, so an atomic temp-file swap would never be picked up.
     std::fs::write(path, text)?;
