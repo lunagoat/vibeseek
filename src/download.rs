@@ -138,8 +138,9 @@ pub async fn process_moves(client: &Client) -> Result<usize> {
             moved += move_dir_contents(&m.staging, &m.target).unwrap_or(0);
             let unfinished = downloads.iter().any(|t| t.batch_id == Some(m.batch) && !t.is_finished());
             let empty = std::fs::read_dir(&m.staging).map(|mut d| d.next().is_none()).unwrap_or(true);
-            let stale = chrono::Utc::now() - m.created > chrono::Duration::days(30);
-            if (!unfinished && empty) || stale {
+            // Only forget an entry once slskd is done with the batch and staging is empty,
+            // however long that takes; otherwise later files would be stranded in staging.
+            if !unfinished && empty {
                 let _ = std::fs::remove_dir(&m.staging);
                 false
             } else {

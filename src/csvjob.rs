@@ -620,6 +620,32 @@ impl Job {
         );
     }
 
+    /// Whether a queued row's download is actually on disk.
+    fn landed(&self, row: &Row, rs: &RowState) -> bool {
+        let Target::Dir(dir) = &self.target else { return false };
+        if row.is_album() {
+            let name = if row.artist.is_empty() { row.album.clone() } else { format!("{} - {}", primary_artist(&row.artist), row.album) };
+            let Target::Dir(d) = self.target.join(&name) else { return false };
+            return std::fs::read_dir(d).map(|mut e| e.next().is_some()).unwrap_or(false);
+        }
+        let base = api::basename(&rs.file);
+        let (stem, ext) = base.rsplit_once('.').unwrap_or((base, ""));
+        std::fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten().any(|e| {
+                    let n = e.file_name().to_string_lossy().to_string();
+                    n == base || (n.starts_with(stem) && n.ends_with(ext) && n.len() <= base.len() + 5)
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    /// Result lines for transfers finishing (not numbered: the counter tracks searches).
+    fn log_result(&self, sym: &str, color: &str, row: &Row, detail: &str) {
+        let pad = " ".repeat(self.total.to_string().len() * 2 + 3);
+        println!("{pad}\x1b[{color}m{sym}\x1b[0m {}  \x1b[2m{detail}\x1b[0m", row.label());
+    }
+
     async fn search(&self, q: &str) -> Result<Vec<SearchResponse>> {
         self.limiter.acquire().await;
         Ok(crate::search::run(&self.client, &self.cfg, q, |_, _| {})
@@ -834,13 +860,17 @@ async fn monitor(
                 .filter(|t| t.batch_id == Some(batch))
                 .collect();
             if ts.is_empty() {
-                // slskd forgot it (restart/retention) — assume done if nothing else is known.
-                if rs
-                    .queued_at
-                    .map(|q| chrono::Utc::now() - q > chrono::Duration::minutes(2))
-                    .unwrap_or(true)
-                {
-                    job.set(&row.key(), |r| r.status = Status::Done);
+                // slskd no longer knows the batch (restart/retention). Trust the disk, not hope:
+                // done if the file landed, otherwise failed (and retryable with --retry).
+                let grace = rs.queued_at.map(|q| chrono::Utc::now() - q > chrono::Duration::minutes(2)).unwrap_or(true);
+                if grace {
+                    if job.landed(row, rs) {
+                        job.set(&row.key(), |r| r.status = Status::Done);
+                        job.log_result("✓", "32", row, &format!("from {}", rs.user));
+                    } else {
+                        job.set(&row.key(), |r| r.status = Status::Failed);
+                        job.log_result("✗", "31", row, "slskd lost track of the transfer (retry with --retry)");
+                    }
                 }
                 continue;
             }
@@ -854,7 +884,7 @@ async fn monitor(
                     .unwrap_or(false);
             if finished && ok * 5 >= ts.len() * 4 {
                 job.set(&row.key(), |r| r.status = Status::Done);
-                job.log("✓", "32", row, &format!("from {}", rs.user));
+                job.log_result("✓", "32", row, &format!("from {}", rs.user));
             } else if finished || too_long {
                 for t in &ts {
                     if !t.is_finished() {
@@ -878,7 +908,7 @@ async fn monitor(
                     println!("    \x1b[33m↻\x1b[0m {}: {why}, trying {user}", row.label());
                 } else {
                     job.set(&row.key(), |r| r.status = Status::Failed);
-                    job.log("✗", "31", row, why);
+                    job.log_result("✗", "31", row, why);
                 }
             }
         }

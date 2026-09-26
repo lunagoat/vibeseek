@@ -514,7 +514,11 @@ fn select_transfers(current: &[Transfer], uploads: bool, which: &[String], all_p
         for n in search::parse_selection(&nums)? {
             let (_, id) = ids.get(n - 1).with_context(|| format!("no transfer #{n} in the last listing"))?;
             let t = current.iter().find(|t| t.id == *id).with_context(|| format!("transfer #{n} is gone"))?;
-            out.push(t.clone());
+            if all_pred(t) {
+                out.push(t.clone());
+            } else {
+                println!("skipping #{n} ({}): {}", t.basename(), t.short_state());
+            }
         }
     }
     Ok(out)
