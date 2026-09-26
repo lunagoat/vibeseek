@@ -140,7 +140,7 @@ async fn cmd_search(cfg: &Config, query: &str, fargs: &FilterArgs, albums: bool,
     if tty {
         eprint!("\r\x1b[2K");
     }
-    let (hits, hidden) = quality::rank(&out.responses, &filter, &cfg.prefs);
+    let (hits, hidden) = quality::rank_query(&out.responses, &filter, &cfg.prefs, query);
 
     let mut last = LastSearch { query: query.to_string(), folders: albums, items: vec![] };
     if albums {

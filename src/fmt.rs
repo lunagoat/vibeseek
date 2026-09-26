@@ -81,14 +81,3 @@ pub fn bar(pct: f64, width: usize) -> String {
     s.push_str(&" ".repeat(width.saturating_sub(len)));
     s
 }
-
-/// "3m ago" style relative time.
-pub fn ago(t: chrono::DateTime<chrono::Utc>) -> String {
-    let secs = (chrono::Utc::now() - t).num_seconds().max(0);
-    match secs {
-        0..=59 => format!("{secs}s ago"),
-        60..=3599 => format!("{}m ago", secs / 60),
-        3600..=86399 => format!("{}h ago", secs / 3600),
-        _ => format!("{}d ago", secs / 86400),
-    }
-}

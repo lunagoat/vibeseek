@@ -27,7 +27,6 @@ pub struct Row {
     pub size: u64,
     pub bytes: u64,
     pub state: String,
-    pub speed: f64,
 }
 
 impl History {
@@ -119,7 +118,7 @@ impl History {
 
     pub fn recent(&self, limit: usize, user: Option<&str>) -> Result<Vec<Row>> {
         let mut stmt = self.db.prepare(
-            "SELECT ended_at, username, filename, size, bytes, state, speed FROM uploads
+            "SELECT ended_at, username, filename, size, bytes, state FROM uploads
              WHERE (?1 IS NULL OR username = ?1)
              ORDER BY ended_at DESC LIMIT ?2",
         )?;
@@ -131,7 +130,6 @@ impl History {
                 size: r.get::<_, i64>(3)? as u64,
                 bytes: r.get::<_, i64>(4)? as u64,
                 state: r.get(5)?,
-                speed: r.get(6)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)

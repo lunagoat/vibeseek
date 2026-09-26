@@ -68,8 +68,6 @@ pub struct SharesState {
 pub struct Search {
     pub id: Uuid,
     #[serde(default)]
-    pub search_text: String,
-    #[serde(default)]
     pub state: String,
     #[serde(default)]
     pub is_complete: bool,
@@ -110,7 +108,6 @@ pub struct SearchFile {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserTransfers {
-    pub username: String,
     #[serde(default)]
     pub directories: Vec<DirTransfers>,
 }
@@ -118,8 +115,6 @@ pub struct UserTransfers {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DirTransfers {
-    #[serde(default)]
-    pub directory: String,
     #[serde(default)]
     pub files: Vec<Transfer>,
 }
@@ -136,11 +131,11 @@ pub struct Transfer {
     pub size: u64,
     #[serde(default)]
     pub state: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_date")]
     pub requested_at: Option<DateTime<Utc>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_date")]
     pub started_at: Option<DateTime<Utc>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_date")]
     pub ended_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub bytes_transferred: u64,
@@ -192,6 +187,17 @@ impl Transfer {
     pub fn basename(&self) -> &str {
         basename(&self.filename)
     }
+}
+
+/// slskd emits some timestamps without a timezone ("2026-09-26T21:39:24.3422648"); they're UTC.
+fn lenient_date<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<DateTime<Utc>>, D::Error> {
+    let Some(s) = Option::<String>::deserialize(d)? else { return Ok(None) };
+    if let Ok(t) = DateTime::parse_from_rfc3339(&s) {
+        return Ok(Some(t.with_timezone(&Utc)));
+    }
+    chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+        .map(|n| Some(n.and_utc()))
+        .map_err(serde::de::Error::custom)
 }
 
 /// Soulseek paths use backslashes.
@@ -280,7 +286,18 @@ impl Client {
             "filterResponses": true,
             "minimumResponseFileCount": 1,
         });
-        self.req(Method::POST, "/searches", Some(body)).await
+        // slskd only starts one search at a time and answers 429 to the rest; wait our turn.
+        let mut delay = 300;
+        for _ in 0..40 {
+            match self.req(Method::POST, "/searches", Some(body.clone())).await {
+                Err(e) if e.to_string().contains("429") => {
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    delay = (delay * 3 / 2).min(3000);
+                }
+                other => return other,
+            }
+        }
+        bail!("slskd kept refusing to start the search (too many concurrent searches)")
     }
 
     pub async fn get_search(&self, id: Uuid) -> Result<Search> {
@@ -386,9 +403,6 @@ impl Client {
         Ok(out)
     }
 
-    pub async fn rescan_shares(&self) -> Result<()> {
-        self.raw(Method::PUT, "/shares", None).await.map(|_| ())
-    }
 }
 
 fn enc(s: &str) -> String {

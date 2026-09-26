@@ -259,6 +259,27 @@ pub fn rank(responses: &[SearchResponse], filter: &Filter, prefs: &Prefs) -> (Ve
     (hits, hidden)
 }
 
+/// Like `rank`, but also rewards files whose *name* (not just folder) matches the query words,
+/// so "take five" puts "Take Five.flac" above other tracks from a folder called "Take Five".
+pub fn rank_query(responses: &[SearchResponse], filter: &Filter, prefs: &Prefs, query: &str) -> (Vec<Hit>, usize) {
+    let (mut hits, hidden) = rank(responses, filter, prefs);
+    let words: Vec<String> = query
+        .split_whitespace()
+        .filter(|w| !w.starts_with('-'))
+        .map(|w| w.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect::<String>())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if !words.is_empty() {
+        for h in &mut hits {
+            let name = h.name().to_lowercase();
+            let n = words.iter().filter(|w| name.contains(w.as_str())).count();
+            h.score += 30.0 * n as f64 / words.len() as f64;
+        }
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+    }
+    (hits, hidden)
+}
+
 /// A folder (album) grouping of hits from one user.
 #[derive(Debug, Clone)]
 pub struct Folder {
@@ -274,9 +295,6 @@ impl Folder {
     }
     pub fn audio_count(&self) -> usize {
         self.files.iter().filter(|h| is_audio(&h.file)).count()
-    }
-    pub fn name(&self) -> &str {
-        api::basename(&self.dir)
     }
 }
 

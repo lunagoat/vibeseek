@@ -10,7 +10,6 @@ use crate::quality::Hit;
 
 pub struct SearchOutcome {
     pub responses: Vec<SearchResponse>,
-    pub state: String,
 }
 
 /// Start a search and poll until slskd marks it complete (or the timeout passes).
@@ -37,7 +36,7 @@ pub async fn run(client: &Client, cfg: &Config, text: &str, mut progress: impl F
     let responses = client.search_responses(s.id).await?;
     // Keep slskd's search list tidy; results live in our cache.
     let _ = client.delete_search(s.id).await;
-    Ok(SearchOutcome { responses, state })
+    Ok(SearchOutcome { responses })
 }
 
 /// Last search, persisted so `vibeseek get 3 5-7` can refer to numbered results.
