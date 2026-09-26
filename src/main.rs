@@ -152,6 +152,8 @@ pub enum Cmd {
     },
     /// Connection and share status
     Status,
+    /// Rescan your shared folders (after adding or removing files)
+    Rescan,
     /// Show config file location (or open it in $EDITOR with --edit)
     Config {
         #[arg(long)]

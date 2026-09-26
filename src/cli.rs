@@ -58,6 +58,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         Cmd::Daemon { action } => crate::daemon::run(&cfg, action),
         Cmd::Agent { action } => crate::agent::run(&cfg, action).await,
         Cmd::Status => cmd_status(&cfg).await,
+        Cmd::Rescan => {
+            Client::new(&cfg)?.rescan_shares().await?;
+            println!("share rescan started — `vibeseek status` shows progress");
+            Ok(())
+        }
         Cmd::Config { edit } => {
             let path = config::config_file();
             if edit {

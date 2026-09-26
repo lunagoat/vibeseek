@@ -366,6 +366,11 @@ impl Client {
         self.raw(Method::DELETE, &path, None).await.map(|_| ())
     }
 
+    /// Rescan shared folders (after adding/removing files).
+    pub async fn rescan_shares(&self) -> Result<()> {
+        self.raw(Method::PUT, "/shares", None).await.map(|_| ())
+    }
+
     pub async fn clear_completed_downloads(&self) -> Result<()> {
         self.raw(Method::DELETE, "/transfers/downloads/all/completed", None).await.map(|_| ())
     }
