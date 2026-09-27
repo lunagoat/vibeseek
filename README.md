@@ -71,13 +71,18 @@ vibeseek csv liked_songs.csv --retry --fallback lossy-ok
 
 slskd forgets finished transfers after a while, so the agent (and the TUI while it's open) records every finished upload into `history.db`. `vibeseek history` shows totals, top downloaders, most-downloaded files, and recent uploads. `-u NAME` shows one person's uploads.
 
-## VPN port
+## Staying reachable (VPN port / router port)
 
-ProtonVPN assigns a new forwarded port on every connect. The agent asks the VPN gateway (`natpmpc -g 10.2.0.1`) every 45s and writes the port into slskd.yml, which slskd applies live without a restart.
+Peers have to be able to connect to you, or searches come back empty and downloads time out. Every 20s the agent picks a route:
 
-- `vibeseek port --show` compares the current port with the VPN's
-- `vibeseek port` syncs it right now
-- `vibeseek port 40649` sets it by hand
+- **VPN up** (`proton0` exists): it asks the VPN gateway for the forwarded port (`natpmpc -g 10.2.0.1`) and uses that. ProtonVPN hands out a new port on every connect.
+- **VPN down:** it opens port **50300** on your home router via UPnP and uses that, the same way Nicotine+ does. Peers see your home IP while you're in this mode.
+
+Whenever the route or port changes, the agent writes the port into slskd.yml (slskd applies it live) and reconnects slskd to the Soulseek server. That way the server learns the new port, and any connection that died with the VPN gets replaced. When the VPN comes back, the router port is closed again.
+
+- `vibeseek port --show` shows the active route and whether it's applied
+- `vibeseek port` syncs right now, and `vibeseek port 40649` sets a port by hand (the agent re-syncs later)
+- The settings are `[port]` in config.toml: `vpn_interface = "proton0"`, `upnp = true`, `upnp_port = 50300`, `auto = true`
 
 ## Using sockseek / Nicotine+ too
 

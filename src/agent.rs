@@ -8,7 +8,7 @@ use crate::api::Client;
 use crate::config::Config;
 use crate::daemon::{self, AGENT_UNIT};
 use crate::history::History;
-use crate::port::{self, SyncResult};
+use crate::port::{self, PortState, SyncResult};
 use crate::AgentAction;
 
 pub async fn run(cfg: &Config, action: Option<AgentAction>) -> Result<()> {
@@ -60,6 +60,7 @@ async fn run_loop(cfg: &Config) -> Result<()> {
     let history = History::open().context("opening history db")?;
     let mut last_port_check = Instant::now() - Duration::from_secs(3600);
     let mut last_port_err = String::new();
+    let mut port_state = PortState::default();
     eprintln!("vibeseek agent running");
     loop {
         // Rebuilt each cycle so a changed API key in slskd.yml is picked up without a restart.
@@ -74,13 +75,41 @@ async fn run_loop(cfg: &Config) -> Result<()> {
         if let Err(e) = crate::slskdcfg::ensure_dirs(&cfg.slskd_yml()) {
             eprintln!("{e:#}");
         }
-        if cfg.port.auto && last_port_check.elapsed() >= Duration::from_secs(45) {
+        if cfg.port.auto && last_port_check.elapsed() >= Duration::from_secs(20) {
             last_port_check = Instant::now();
-            // natpmpc blocks for a moment; keep it off the async threads.
+            let prev_route = port_state.route;
+            // natpmpc/upnpc block for a moment; keep them off the async threads.
             let c = cfg.clone();
-            match tokio::task::spawn_blocking(move || port::sync(&c)).await? {
-                Ok(SyncResult::Changed { from, to }) => eprintln!("forwarded port changed {from} → {to}; slskd updated"),
-                Ok(SyncResult::Unchanged(_)) => last_port_err.clear(),
+            let (st, res) = tokio::task::spawn_blocking(move || {
+                let mut st = port_state;
+                let r = port::step(&c, &mut st);
+                (st, r)
+            })
+            .await?;
+            port_state = st;
+            match res {
+                Ok(step) => {
+                    last_port_err.clear();
+                    if let Some(note) = &step.note {
+                        eprintln!("{note}");
+                    }
+                    let route_changed = prev_route.is_some() && prev_route != Some(step.route);
+                    if route_changed {
+                        eprintln!("now reachable through {}", step.route.describe());
+                    }
+                    let port_changed = matches!(step.result, SyncResult::Changed { .. });
+                    if let SyncResult::Changed { from, to } = step.result {
+                        eprintln!("listen port {from} → {to}; slskd updated");
+                    }
+                    // The old server connection may have died with the VPN without slskd noticing,
+                    // and the server needs our new port: reconnect.
+                    if route_changed || port_changed {
+                        match client.reconnect().await {
+                            Ok(()) => eprintln!("reconnected slskd to Soulseek"),
+                            Err(e) => eprintln!("reconnect failed: {e:#}"),
+                        }
+                    }
+                }
                 Err(e) => {
                     let msg = e.to_string();
                     if msg != last_port_err {

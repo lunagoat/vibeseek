@@ -1,32 +1,45 @@
-//! Forwarded-port detection (ProtonVPN NAT-PMP) and syncing it into slskd.
+//! Keeping slskd reachable: the VPN's forwarded port (ProtonVPN NAT-PMP) when the VPN is up,
+//! otherwise a UPnP mapping on the home router (what Nicotine+ does by default).
 
 use anyhow::{bail, Context, Result};
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::slskdcfg;
 
-/// Ask the VPN gateway which public TCP port is forwarded to us.
-/// Uses `natpmpc`, the same tool ProtonVPN documents for port forwarding.
-pub fn detect(gateway: &str) -> Result<u16> {
-    // natpmpc retries forever when the gateway is unreachable (VPN off), so give it a deadline.
-    let mut child = Command::new("natpmpc")
-        .args(["-a", "1", "0", "tcp", "60", "-g", gateway])
+/// Run a command, killing it after `secs` (natpmpc retries forever when the VPN is down,
+/// and UPnP discovery can stall on flaky routers).
+fn run_timeout(cmd: &str, args: &[&str], secs: u64) -> Result<Output> {
+    let mut child = Command::new(cmd)
+        .args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
-        .context("running natpmpc (install libnatpmp)")?;
-    let deadline = Instant::now() + Duration::from_secs(6);
+        .with_context(|| format!("running {cmd}"))?;
+    let deadline = Instant::now() + Duration::from_secs(secs);
     while child.try_wait()?.is_none() {
         if Instant::now() > deadline {
             let _ = child.kill();
             let _ = child.wait();
-            bail!("VPN gateway {gateway} didn't answer (is the VPN connected?)");
+            bail!("{cmd} timed out");
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    let out = child.wait_with_output()?;
+    Ok(child.wait_with_output()?)
+}
+
+/// Is the VPN's network interface present?
+pub fn vpn_up(cfg: &Config) -> bool {
+    Path::new("/sys/class/net").join(&cfg.port.vpn_interface).exists()
+}
+
+/// Ask the VPN gateway which public TCP port is forwarded to us.
+/// Uses `natpmpc`, the same tool ProtonVPN documents for port forwarding.
+pub fn detect(gateway: &str) -> Result<u16> {
+    let out = run_timeout("natpmpc", &["-a", "1", "0", "tcp", "60", "-g", gateway], 6)
+        .map_err(|_| anyhow::anyhow!("VPN gateway {gateway} didn't answer (is the VPN connected?)"))?;
     let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
         // "Mapped public port 40649 protocol TCP to local port 0 lifetime 60"
@@ -36,7 +49,24 @@ pub fn detect(gateway: &str) -> Result<u16> {
             }
         }
     }
-    bail!("VPN gateway {gateway} didn't return a forwarded port (is the VPN connected with port forwarding on?)")
+    bail!("VPN gateway {gateway} didn't return a forwarded port (is port forwarding on?)")
+}
+
+/// Open `port` on the home router, forwarded to this machine.
+pub fn upnp_map(port: u16) -> Result<()> {
+    let p = port.to_string();
+    let out = run_timeout("upnpc", &["-e", "vibeseek slskd", "-r", &p, "TCP"], 20)?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    if text.contains("is redirected to internal") {
+        return Ok(());
+    }
+    let why = text.lines().find(|l| l.contains("failed") || l.contains("No IGD")).unwrap_or("no UPnP router answered");
+    bail!("UPnP mapping of port {port} failed: {}", why.trim())
+}
+
+/// Close the router port again (harmless if it isn't open).
+pub fn upnp_unmap(port: u16) -> Result<()> {
+    run_timeout("upnpc", &["-d", &port.to_string(), "TCP"], 20).map(|_| ())
 }
 
 pub enum SyncResult {
@@ -55,7 +85,78 @@ pub fn apply(cfg: &Config, port: u16) -> Result<SyncResult> {
     Ok(SyncResult::Changed { from: current, to: port })
 }
 
-pub fn sync(cfg: &Config) -> Result<SyncResult> {
-    let port = detect(&cfg.port.gateway)?;
-    apply(cfg, port)
+/// How peers reach us.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Route {
+    Vpn,
+    Upnp,
+}
+
+impl Route {
+    pub fn describe(self) -> &'static str {
+        match self {
+            Route::Vpn => "VPN port forwarding",
+            Route::Upnp => "router port (UPnP)",
+        }
+    }
+}
+
+/// Remembered between agent cycles.
+pub struct PortState {
+    pub route: Option<Route>,
+    upnp_mapped: bool,
+    last_map: Instant,
+    /// A mapping from a previous run may still be open; close it once the VPN is seen.
+    cleaned: bool,
+}
+
+impl Default for PortState {
+    fn default() -> Self {
+        Self { route: None, upnp_mapped: false, last_map: Instant::now(), cleaned: false }
+    }
+}
+
+pub struct Step {
+    pub route: Route,
+    pub result: SyncResult,
+    /// Something worth logging (a router port opened/closed).
+    pub note: Option<String>,
+}
+
+/// One sync pass: use the VPN's port when the VPN is up, otherwise open a router port.
+pub fn step(cfg: &Config, st: &mut PortState) -> Result<Step> {
+    let upnp_port = cfg.port.upnp_port;
+    if vpn_up(cfg) {
+        let port = detect(&cfg.port.gateway)?;
+        let mut note = None;
+        if st.upnp_mapped || !st.cleaned {
+            let was = st.upnp_mapped;
+            let _ = upnp_unmap(upnp_port);
+            st.upnp_mapped = false;
+            st.cleaned = true;
+            if was {
+                note = Some(format!("closed router port {upnp_port}"));
+            }
+        }
+        let result = apply(cfg, port)?;
+        st.route = Some(Route::Vpn);
+        return Ok(Step { route: Route::Vpn, result, note });
+    }
+    if !cfg.port.upnp {
+        bail!("VPN is down and UPnP fallback is off (port.upnp in config.toml)");
+    }
+    let mut note = None;
+    // Re-map every 10 minutes in case the router rebooted or our LAN address changed.
+    if !st.upnp_mapped || st.last_map.elapsed() > Duration::from_secs(600) {
+        upnp_map(upnp_port)?;
+        if !st.upnp_mapped {
+            note = Some(format!("opened router port {upnp_port} via UPnP"));
+        }
+        st.upnp_mapped = true;
+        st.cleaned = true;
+        st.last_map = Instant::now();
+    }
+    let result = apply(cfg, upnp_port)?;
+    st.route = Some(Route::Upnp);
+    Ok(Step { route: Route::Upnp, result, note })
 }

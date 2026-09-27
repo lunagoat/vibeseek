@@ -54,7 +54,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Cmd::Csv(args) => crate::csvjob::run(&cfg, args).await,
-        Cmd::Port { port, show } => cmd_port(&cfg, port, show),
+        Cmd::Port { port, show } => cmd_port(&cfg, port, show).await,
         Cmd::Daemon { action } => crate::daemon::run(&cfg, action),
         Cmd::Agent { action } => crate::agent::run(&cfg, action).await,
         Cmd::Status => cmd_status(&cfg).await,
@@ -630,24 +630,51 @@ fn print_history_rows(rows: &[crate::history::Row]) {
     println!("{t}");
 }
 
-fn cmd_port(cfg: &Config, port: Option<u16>, show: bool) -> Result<()> {
+async fn cmd_port(cfg: &Config, port: Option<u16>, show: bool) -> Result<()> {
     let yml = cfg.slskd_yml();
     let current = slskdcfg::listen_port(&yml)?;
     if show {
         println!("slskd listen port: {current}");
-        match crate::port::detect(&cfg.port.gateway) {
-            Ok(p) => println!("VPN forwarded port: {p}{}", if p == current { " ✓" } else { "  (mismatch — run `vibeseek port`)" }),
-            Err(e) => println!("VPN forwarded port: unavailable ({e})"),
+        if crate::port::vpn_up(cfg) {
+            match crate::port::detect(&cfg.port.gateway) {
+                Ok(p) => println!("VPN ({}) is up, forwarded port: {p}{}", cfg.port.vpn_interface, if p == current { " ✓" } else { "  (mismatch — run `vibeseek port`)" }),
+                Err(e) => println!("VPN ({}) is up, but no forwarded port: {e}", cfg.port.vpn_interface),
+            }
+        } else if cfg.port.upnp {
+            let ok = current == cfg.port.upnp_port;
+            println!(
+                "VPN ({}) is down → router port {} via UPnP{}",
+                cfg.port.vpn_interface,
+                cfg.port.upnp_port,
+                if ok { " ✓" } else { "  (not applied yet — run `vibeseek port`)" }
+            );
+        } else {
+            println!("VPN ({}) is down and UPnP fallback is off: peers can't connect to you", cfg.port.vpn_interface);
         }
         return Ok(());
     }
-    let p = match port {
-        Some(p) => p,
-        None => crate::port::detect(&cfg.port.gateway)?,
+    let result = match port {
+        Some(p) => {
+            println!("note: the agent re-syncs the port automatically (port.auto in config.toml)");
+            crate::port::apply(cfg, p)?
+        }
+        None => {
+            let c = cfg.clone();
+            let step = tokio::task::spawn_blocking(move || crate::port::step(&c, &mut crate::port::PortState::default())).await??;
+            if let Some(n) = &step.note {
+                println!("{n}");
+            }
+            println!("reachable through {}", step.route.describe());
+            step.result
+        }
     };
-    match crate::port::apply(cfg, p)? {
+    match result {
         crate::port::SyncResult::Unchanged(p) => println!("port already {p}"),
-        crate::port::SyncResult::Changed { from, to } => println!("listen port {from} → {to} (slskd applies it live)"),
+        crate::port::SyncResult::Changed { from, to } => {
+            println!("listen port {from} → {to}");
+            Client::new(cfg)?.reconnect().await?;
+            println!("reconnected slskd so the server learns the new port");
+        }
     }
     Ok(())
 }

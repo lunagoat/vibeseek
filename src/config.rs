@@ -40,6 +40,11 @@ pub struct PortConfig {
     /// Ask the VPN gateway (NAT-PMP) for the forwarded port and keep slskd in sync.
     pub auto: bool,
     pub gateway: String,
+    /// Network interface that exists while the VPN is connected.
+    pub vpn_interface: String,
+    /// When the VPN is down, open a port on the home router via UPnP (like Nicotine+).
+    pub upnp: bool,
+    pub upnp_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,7 +124,7 @@ impl Default for SlskdConfig {
 
 impl Default for PortConfig {
     fn default() -> Self {
-        Self { auto: true, gateway: "10.2.0.1".into() }
+        Self { auto: true, gateway: "10.2.0.1".into(), vpn_interface: "proton0".into(), upnp: true, upnp_port: 50300 }
     }
 }
 

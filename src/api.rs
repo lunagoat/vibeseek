@@ -366,6 +366,14 @@ impl Client {
         self.raw(Method::DELETE, &path, None).await.map(|_| ())
     }
 
+    /// Drop and re-establish slskd's server connection, so the server learns our new listen
+    /// port and any connection that died with the VPN is replaced.
+    pub async fn reconnect(&self) -> Result<()> {
+        let _ = self.raw(Method::DELETE, "/server", Some(json!("vibeseek: network route changed"))).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        self.raw(Method::PUT, "/server", None).await.map(|_| ())
+    }
+
     /// Rescan shared folders (after adding/removing files).
     pub async fn rescan_shares(&self) -> Result<()> {
         self.raw(Method::PUT, "/shares", None).await.map(|_| ())

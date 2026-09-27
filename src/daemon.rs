@@ -32,8 +32,8 @@ pub fn run(cfg: &Config, action: DaemonAction) -> Result<()> {
         DaemonAction::Start => {
             if cfg.port.auto {
                 // Make sure slskd comes up on the right port.
-                if let Ok(r) = crate::port::sync(cfg) {
-                    if let crate::port::SyncResult::Changed { from, to } = r {
+                if let Ok(step) = crate::port::step(cfg, &mut crate::port::PortState::default()) {
+                    if let crate::port::SyncResult::Changed { from, to } = step.result {
                         println!("port {from} → {to}");
                     }
                 }
