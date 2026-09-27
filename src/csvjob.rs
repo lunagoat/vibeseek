@@ -712,7 +712,7 @@ impl Job {
                 *s += 1;
                 *s
             };
-            if streak < 3 {
+            if streak < 10 {
                 return Ok(responses);
             }
             println!("    \x1b[33m●\x1b[0m {streak} searches in a row came back empty — connection problem? pausing 60s");
