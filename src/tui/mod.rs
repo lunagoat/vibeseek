@@ -49,6 +49,8 @@ pub enum Mode {
     Compose(String),
     /// Typing the username for a new conversation.
     NewConversation(String),
+    /// Typing file types to show (e.g. "mkv", "dsd, flac").
+    TypesPrompt(String),
     Help,
 }
 
@@ -110,6 +112,8 @@ pub struct App {
     pub folders_view: bool,
     pub preset: usize,
     pub preset_names: Vec<String>,
+    /// File types chosen with `t`, overriding the preset's.
+    pub types: Option<Vec<String>>,
     pub target: Target,
     pub sort: usize,
     pub searching: Option<Instant>,
@@ -139,6 +143,7 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut app = App {
         preset: preset_names.iter().position(|k| *k == cfg.search.default_preset).unwrap_or(0),
         preset_names,
+        types: None,
         target: Target::from_opt(&cfg, None),
         cfg,
         client,
@@ -374,7 +379,11 @@ impl App {
     }
 
     pub fn filter(&self) -> Filter {
-        self.preset_names.get(self.preset).and_then(|n| self.cfg.presets.get(n)).cloned().unwrap_or_default()
+        let mut f = self.preset_names.get(self.preset).and_then(|n| self.cfg.presets.get(n)).cloned().unwrap_or_default();
+        if let Some(t) = &self.types {
+            f.formats = t.clone();
+        }
+        f
     }
 
     fn rerank(&mut self) {
@@ -735,6 +744,31 @@ impl App {
                 }
                 return false;
             }
+            Mode::TypesPrompt(buf) => {
+                match k.code {
+                    KeyCode::Esc => self.mode = Mode::Normal,
+                    KeyCode::Enter => {
+                        let t = crate::quality::expand_types(&[buf.as_str()]);
+                        self.mode = Mode::Normal;
+                        self.types = (!t.is_empty()).then_some(t);
+                        self.rerank();
+                        match &self.types {
+                            Some(t) => {
+                                let shown = self.hits.len();
+                                self.say(format!("showing only {} ({shown} results)", t.join(", ")))
+                            }
+                            None => self.say("file types: back to the preset's"),
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        buf.pop();
+                    }
+                    KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => buf.clear(),
+                    KeyCode::Char(c) => buf.push(c),
+                    _ => {}
+                }
+                return false;
+            }
             Mode::Compose(_) | Mode::NewConversation(_) => {
                 let composing = matches!(self.mode, Mode::Compose(_));
                 let (Mode::Compose(buf) | Mode::NewConversation(buf)) = &mut self.mode else { unreachable!() };
@@ -860,6 +894,10 @@ impl App {
                     let name = self.preset_names[self.preset].clone();
                     self.say(format!("filter: {name} ({})", self.filter().describe()));
                 }
+            }
+            KeyCode::Char('t') => {
+                let cur = self.types.as_ref().map(|t| t.join(", ")).unwrap_or_default();
+                self.mode = Mode::TypesPrompt(cur);
             }
             KeyCode::Char('v') => {
                 self.folders_view = !self.folders_view;

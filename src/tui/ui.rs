@@ -102,10 +102,11 @@ fn render_bottom(f: &mut Frame, a: &App, r: Rect) {
     let hints = match (&a.mode, a.tab) {
         (Mode::SearchInput, _) => "Enter search  Esc results  Ctrl-U clear",
         (Mode::OutputPrompt(_), _) => "Enter set folder (empty = default)  Esc cancel",
-        (_, Tab::Search) => "/ search  Enter download  a whole folder  f filter  v files/folders  s sort  o output folder  r re-run  ? help",
+        (_, Tab::Search) => "/ search  Enter download  a whole folder  f filter  t file types  v files/folders  s sort  o output folder  ? help",
         (_, Tab::Downloads) => "c cancel  R retry failed  x clear finished  h show/hide old  ? help",
         (_, Tab::Uploads) => "Enter user details  b ban  c cancel  x clear finished  h show/hide old  ? help",
         (Mode::Compose(_), _) => "Enter send  Esc cancel  Ctrl-U clear",
+        (Mode::TypesPrompt(_), _) => "Enter apply (empty = preset's types)  Esc cancel  Ctrl-U clear",
         (Mode::NewConversation(_), _) => "type a username, Enter to start writing  Esc cancel",
         (_, Tab::History) => "u unban selected  ↑↓ select ban  P check port  ? help",
         (_, Tab::Messages) => "Enter reply  n new message  b ban  d close conversation  P check port  ? help",
@@ -160,6 +161,7 @@ fn render_search(f: &mut Frame, a: &mut App, r: Rect) {
     let mut info = vec![
         Span::styled(format!(" filter {pname} "), Style::default().fg(ACCENT)),
         Span::styled(format!("({})", a.filter().describe()), dim()),
+        Span::styled(if a.types.is_some() { "  [t: types set]".to_string() } else { String::new() }, Style::default().fg(Color::Yellow)),
         Span::styled(format!("  · {} · sort {}", if a.folders_view { "folders" } else { "files" }, SORTS[a.sort]), dim()),
         Span::styled(format!("  · → {}", a.target.describe(&a.cfg)), dim()),
     ];
@@ -543,7 +545,8 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
                 ("Enter", "download selected file (or folder in folder view)"),
                 ("a", "download the selected file's whole folder"),
                 ("v", "toggle files / folders (albums) view"),
-                ("f", "cycle quality filter preset"),
+                ("f", "cycle filter preset (lossless, lossy-ok, any, video, dsd…)"),
+                ("t", "only show certain file types: mkv, dsf, video, dsd…"),
                 ("s", "cycle sort (best, size, speed, peer)"),
                 ("o", "set the download folder"),
                 ("r", "re-run the search"),
@@ -633,6 +636,19 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
                 Table::new(hist, [Constraint::Length(12), Constraint::Length(12), Constraint::Length(9), Constraint::Min(10)]).block(block("Past uploads")),
                 hist_r,
             );
+        }
+        Mode::TypesPrompt(buf) => {
+            let r = centered(area, 72, 8);
+            f.render_widget(Clear, r);
+            let text = vec![
+                Line::from(Span::styled("Extensions or groups, comma separated. Empty = the preset's types.", dim())),
+                Line::from(Span::styled("e.g.  mkv  ·  dsd  ·  video  ·  flac, dsf", dim())),
+                Line::from(Span::styled("groups: video, dsd, lossless, lossy, audio", dim())),
+                Line::from(""),
+                Line::from(buf.as_str()),
+            ];
+            f.render_widget(Paragraph::new(text).block(block("File types")), r);
+            f.set_cursor_position((r.x + 1 + buf.width() as u16, r.y + 5));
         }
         Mode::NewConversation(buf) => {
             let r = centered(area, 60, 5);

@@ -99,7 +99,7 @@ pub fn build_filter(cfg: &Config, args: &FilterArgs, default_preset: &str) -> Re
     let mut f = cfg.preset(&name)?;
     let mut label = name;
     if let Some(fmts) = &args.format {
-        f.formats = fmts.iter().map(|s| s.trim().trim_start_matches('.').to_lowercase()).filter(|s| !s.is_empty()).collect();
+        f.formats = quality::expand_types(fmts);
         label = "custom".into();
     }
     if args.min_bitrate.is_some() {

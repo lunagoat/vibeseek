@@ -118,6 +118,8 @@ impl Default for Config {
             },
         );
         presets.insert("any".into(), Filter::default());
+        presets.insert("video".into(), Filter { formats: crate::quality::expand_types(&["video"]), ..Default::default() });
+        presets.insert("dsd".into(), Filter { formats: crate::quality::expand_types(&["dsd"]), ..Default::default() });
         Self {
             slskd: SlskdConfig::default(),
             port: PortConfig::default(),

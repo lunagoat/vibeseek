@@ -45,7 +45,36 @@ impl Default for Prefs {
 }
 
 const LOSSLESS: &[&str] = &["flac", "wav", "alac", "aiff", "aif", "ape", "wv"];
-pub const AUDIO: &[&str] = &["flac", "mp3", "ogg", "m4a", "opus", "wav", "aac", "alac", "aiff", "aif", "ape", "wv", "wma"];
+const LOSSY: &[&str] = &["mp3", "ogg", "m4a", "opus", "aac", "wma"];
+/// 1-bit DSD (SACD rips): no bit depth / PCM sample rate limits apply.
+const DSD: &[&str] = &["dsf", "dff", "dsd"];
+const VIDEO: &[&str] = &["mkv", "mp4", "avi", "m4v", "mov", "webm", "wmv", "ts", "m2ts", "mpg", "mpeg", "flv"];
+pub const AUDIO: &[&str] = &["flac", "mp3", "ogg", "m4a", "opus", "wav", "aac", "alac", "aiff", "aif", "ape", "wv", "wma", "dsf", "dff"];
+
+/// Expand a user's type list: extensions (".mkv", "FLAC") and groups
+/// (video, dsd, lossless, lossy, audio) → lowercase extensions.
+pub fn expand_types<S: AsRef<str>>(items: &[S]) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for item in items {
+        for t in item.as_ref().split([',', ' ']).map(|t| t.trim().trim_start_matches('.').to_lowercase()).filter(|t| !t.is_empty()) {
+            let group: &[&str] = match t.as_str() {
+                "video" | "videos" => VIDEO,
+                "dsd" | "sacd" => DSD,
+                "lossless" => LOSSLESS,
+                "lossy" => LOSSY,
+                "audio" | "music" => AUDIO,
+                _ => &[],
+            };
+            let add: Vec<String> = if group.is_empty() { vec![t] } else { group.iter().map(|g| g.to_string()).collect() };
+            for a in add {
+                if !out.contains(&a) {
+                    out.push(a);
+                }
+            }
+        }
+    }
+    out
+}
 
 pub fn ext_of(f: &SearchFile) -> String {
     let e = f.extension.trim_start_matches('.').to_lowercase();
@@ -90,8 +119,9 @@ impl Filter {
             return false;
         }
         let lossless = LOSSLESS.contains(&ext.as_str());
-        // Bitrate limits only make sense for lossy formats; peers report odd values for FLAC.
-        let bitrate_ok = lossless
+        // Bitrate limits only make sense for lossy audio (peers report odd values for FLAC, and
+        // video/DSD bitrates aren't comparable).
+        let bitrate_ok = !LOSSY.contains(&ext.as_str())
             || (check_min(f.bit_rate, self.min_bitrate, self.strict) && check_max(f.bit_rate, self.max_bitrate, self.strict));
         let depth_ok = !lossless || check_min(f.bit_depth, self.min_bitdepth, self.strict);
         let rate_ok = !lossless
@@ -105,29 +135,37 @@ impl Filter {
         if self.is_empty() {
             return "no filter".into();
         }
+        // Only mention limits that can affect the chosen types.
+        let any = self.formats.is_empty();
+        let has = |group: &[&str]| any || self.formats.iter().any(|f| group.contains(&f.as_str()));
+        let (lossy, lossless) = (has(LOSSY), has(LOSSLESS));
         let mut parts = vec![];
         if !self.formats.is_empty() {
             parts.push(self.formats.join("/"));
         }
-        if let Some(b) = self.min_bitrate {
-            parts.push(format!("≥{b}kbps"));
+        if lossy {
+            if let Some(b) = self.min_bitrate {
+                parts.push(format!("≥{b}kbps"));
+            }
+            if let Some(b) = self.max_bitrate {
+                parts.push(format!("≤{b}kbps"));
+            }
         }
-        if let Some(b) = self.max_bitrate {
-            parts.push(format!("≤{b}kbps"));
-        }
-        if let Some(d) = self.min_bitdepth {
-            parts.push(format!("≥{d}bit"));
-        }
-        if let Some(r) = self.min_samplerate {
-            parts.push(format!("≥{}kHz", khz(r)));
-        }
-        if let Some(r) = self.max_samplerate {
-            parts.push(format!("≤{}kHz", khz(r)));
+        if lossless {
+            if let Some(d) = self.min_bitdepth {
+                parts.push(format!("≥{d}bit"));
+            }
+            if let Some(r) = self.min_samplerate {
+                parts.push(format!("≥{}kHz", khz(r)));
+            }
+            if let Some(r) = self.max_samplerate {
+                parts.push(format!("≤{}kHz", khz(r)));
+            }
         }
         if self.strict {
             parts.push("strict".into());
         }
-        parts.join(" ")
+        if parts.is_empty() { "no filter".into() } else { parts.join(" ") }
     }
 }
 
@@ -144,6 +182,16 @@ pub fn khz(r: u32) -> String {
 pub fn quality_label(f: &SearchFile) -> String {
     let ext = ext_of(f);
     let up = ext.to_uppercase();
+    if DSD.contains(&ext.as_str()) {
+        // DSD64 = 64 × 44.1 kHz.
+        return match f.sample_rate {
+            Some(r) if r >= 2_822_400 => format!("{up} DSD{}", r / 44_100),
+            _ => format!("{up} DSD"),
+        };
+    }
+    if VIDEO.contains(&ext.as_str()) {
+        return up;
+    }
     if LOSSLESS.contains(&ext.as_str()) {
         match (f.bit_depth, f.sample_rate) {
             (Some(d), Some(r)) => format!("{up} {d}/{}", khz(r)),
@@ -167,7 +215,7 @@ impl Prefs {
         let mut s = 0.0;
         if let Some(pos) = self.formats.iter().position(|x| x.eq_ignore_ascii_case(&ext)) {
             s += 40.0 - pos as f64 * 5.0;
-        } else if LOSSLESS.contains(&ext.as_str()) {
+        } else if LOSSLESS.contains(&ext.as_str()) || DSD.contains(&ext.as_str()) {
             s += 25.0;
         }
         if LOSSLESS.contains(&ext.as_str()) {
@@ -316,4 +364,37 @@ pub fn group_folders(hits: &[Hit]) -> Vec<Folder> {
         .collect();
     folders.sort_by(|a, b| b.score.total_cmp(&a.score));
     folders
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file(name: &str, depth: Option<u32>, rate: Option<u32>, bitrate: Option<u32>) -> SearchFile {
+        SearchFile { filename: name.into(), bit_depth: depth, sample_rate: rate, bit_rate: bitrate, ..Default::default() }
+    }
+
+    #[test]
+    fn type_groups() {
+        assert_eq!(expand_types(&[".MKV"]), vec!["mkv"]);
+        assert_eq!(expand_types(&["dsd"]), vec!["dsf", "dff", "dsd"]);
+        assert!(expand_types(&["video, flac"]).contains(&"mp4".to_string()));
+        assert!(expand_types(&["video, flac"]).contains(&"flac".to_string()));
+    }
+
+    #[test]
+    fn dsd_and_video_pass_audio_limits() {
+        // Lossless-style limits (≥16 bit, ≥44.1k, ≥192kbps) must not reject DSD or video.
+        let f = Filter {
+            formats: expand_types(&["dsd", "video"]),
+            min_bitdepth: Some(16),
+            min_samplerate: Some(44100),
+            min_bitrate: Some(192),
+            ..Default::default()
+        };
+        assert!(f.accepts(&file("a\\01.dsf", Some(1), Some(2_822_400), None)));
+        assert!(f.accepts(&file("show\\S01E01.mkv", None, None, Some(128))));
+        assert!(!f.accepts(&file("a\\01.flac", Some(24), Some(96000), None)));
+        assert_eq!(quality_label(&file("a\\01.dsf", Some(1), Some(5_644_800), None)), "DSF DSD128");
+    }
 }

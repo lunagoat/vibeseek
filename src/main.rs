@@ -28,7 +28,8 @@ pub struct FilterArgs {
     /// Filter preset (lossless, lossy-ok, any, or your own from config.toml)
     #[arg(short, long)]
     pub preset: Option<String>,
-    /// Allowed formats, comma separated (overrides the preset's), e.g. flac,mp3
+    /// File types, comma separated (overrides the preset's): extensions like mkv,dsf,flac or
+    /// groups: video, dsd, lossless, lossy, audio
     #[arg(short, long, value_delimiter = ',')]
     pub format: Option<Vec<String>>,
     /// Minimum bitrate for lossy files (kbps)

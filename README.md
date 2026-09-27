@@ -42,7 +42,8 @@ vibeseek csv ~/Desktop/liked_songs.csv -o ~/Music/liked --fallback lossy-ok
 
 `vibeseek search <words>` prints numbered results and remembers them, so `vibeseek get <numbers>` downloads them. You can also do both at once with `-d 1 -o <folder>`.
 
-- `-p lossless | lossy-ok | any` picks a filter preset, and `-f flac,mp3`, `--min-bitrate`, `--min-bitdepth`, `--min-samplerate`, `--strict` override it
+- `-p lossless | lossy-ok | any | video | dsd` picks a filter preset, and `--min-bitrate`, `--min-bitdepth`, `--min-samplerate`, `--strict` override it
+- `-f` limits file types: extensions (`-f mkv`, `-f dsf,flac`) or groups (`video`, `dsd`, `lossless`, `lossy`, `audio`). In the TUI, press `t`. Audio quality limits only apply to audio files, so `-f mkv` isn't filtered by bit depth, and DSD's 1-bit files aren't rejected.
 - `-a` groups results by folder, so `get` downloads the entire remote folder, cover art included
 - `-o <folder>` downloads anywhere; without it, files go to `~/Music/downloads/<source folder>/`
 - Ranking prefers hi-res FLAC (your sockseek `pref-*` values, in `[prefs]` in config.toml), peers with a free slot and short queue, and filenames that match your words
