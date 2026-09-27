@@ -8,7 +8,7 @@ Soulseek from the terminal. A CLI + TUI frontend for [slskd](https://github.com/
 - **Upload monitoring**: who's downloading from you, live progress and speed, permanent history and stats, cancel and ban
 
 ```
-vibeseek                      # full-screen TUI (tabs: Search / Downloads / Uploads / History)
+vibeseek                      # full-screen TUI (tabs: Search / Downloads / Uploads / History / Messages)
 vibeseek search take five     # one-off search, numbered results
 vibeseek get 1 3-5 -o ~/Music/jazz --wait
 vibeseek search -a miles davis kind of blue   # group by folder (albums); `get 1` downloads the album
@@ -107,6 +107,19 @@ Whenever the route or port changes, the agent writes the port into slskd.yml (sl
 - `vibeseek port --show` shows the active route and whether it's applied
 - `vibeseek port` syncs right now, and `vibeseek port 40649` sets a port by hand (the agent re-syncs later)
 - The settings are `[port]` in config.toml: `vpn_interface = "proton0"`, `upnp = true`, `upnp_port = 50300`, `auto = true`
+
+## Messages
+
+Tab **5** in the TUI shows your private messages. Conversations with unread messages are listed first, and the top bar shows `✉ N` for unread messages on every tab.
+
+- Opening a conversation marks it read. Press `Enter` (or `r`) to reply, `n` to message someone new, `b` to ban the sender (good for spam), and `d` to close the conversation. A closed conversation comes back if they write again.
+- From the command line: `vibeseek messages` lists conversations, `vibeseek messages <user>` shows one and marks it read, and `vibeseek msg <user> <text>` sends a message.
+
+## Checking your port
+
+`vibeseek port --check` asks Soulseek's own port tester (the page SoulseekQT's "Check ports" opens) whether peers can reach you, and prints the verdict. `vibeseek port --open` opens that page in your browser instead. In the TUI, press `P` on any tab. The result shows in the status line, and the port number in the top bar turns green or red.
+
+The tester checks whichever IP the request comes from. That's your VPN address while the VPN is up and your home address otherwise, which is the same route slskd uses.
 
 ## Using sockseek / Nicotine+ too
 

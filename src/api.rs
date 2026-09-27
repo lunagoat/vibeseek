@@ -221,6 +221,35 @@ pub fn flatten(users: Vec<UserTransfers>) -> Vec<Transfer> {
     out
 }
 
+/// A private-message conversation.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Conversation {
+    pub username: String,
+    pub is_active: bool,
+    pub un_acknowledged_message_count: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateMessage {
+    #[serde(default, deserialize_with = "lenient_date")]
+    pub timestamp: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub id: i64,
+    /// "In" or "Out"
+    #[serde(default)]
+    pub direction: String,
+    #[serde(default)]
+    pub message: String,
+}
+
+impl PrivateMessage {
+    pub fn is_incoming(&self) -> bool {
+        self.direction == "In"
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct QueueFile {
     pub filename: String,
@@ -372,6 +401,32 @@ impl Client {
         let _ = self.raw(Method::DELETE, "/server", Some(json!("vibeseek: network route changed"))).await;
         tokio::time::sleep(Duration::from_secs(2)).await;
         self.raw(Method::PUT, "/server", None).await.map(|_| ())
+    }
+
+    pub async fn conversations(&self) -> Result<Vec<Conversation>> {
+        // Closed conversations are left out; slskd reopens one when that person writes again.
+        self.req(Method::GET, "/conversations", None).await
+    }
+
+    /// Oldest first. Reading doesn't mark them read; see `ack_conversation`.
+    pub async fn messages(&self, username: &str) -> Result<Vec<PrivateMessage>> {
+        let mut m: Vec<PrivateMessage> = self.req(Method::GET, &format!("/conversations/{}/messages", enc(username)), None).await?;
+        m.sort_by_key(|x| (x.timestamp, x.id));
+        Ok(m)
+    }
+
+    pub async fn send_message(&self, username: &str, text: &str) -> Result<()> {
+        self.raw(Method::POST, &format!("/conversations/{}", enc(username)), Some(json!(text))).await.map(|_| ())
+    }
+
+    /// Mark every message from `username` as read.
+    pub async fn ack_conversation(&self, username: &str) -> Result<()> {
+        self.raw(Method::PUT, &format!("/conversations/{}", enc(username)), None).await.map(|_| ())
+    }
+
+    /// Hide a conversation (it reappears if they message again).
+    pub async fn close_conversation(&self, username: &str) -> Result<()> {
+        self.raw(Method::DELETE, &format!("/conversations/{}", enc(username)), None).await.map(|_| ())
     }
 
     /// Rescan shared folders (after adding/removing files).

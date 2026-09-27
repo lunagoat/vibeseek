@@ -46,6 +46,7 @@ pub fn render(f: &mut Frame, a: &mut App) {
         Tab::Downloads => render_transfers(f, a, body, false),
         Tab::Uploads => render_transfers(f, a, body, true),
         Tab::History => render_history(f, a, body),
+        Tab::Messages => render_messages(f, a, body),
     }
     render_bottom(f, a, bottom);
     render_popup(f, a, area);
@@ -53,8 +54,10 @@ pub fn render(f: &mut Frame, a: &mut App) {
 
 fn render_top(f: &mut Frame, a: &App, r: Rect) {
     let mut left = vec![Span::styled(" vibeseek ", Style::default().fg(Color::Black).bg(ACCENT).bold()), Span::raw(" ")];
-    for (i, (t, name)) in [(Tab::Search, "Search"), (Tab::Downloads, "Downloads"), (Tab::Uploads, "Uploads"), (Tab::History, "History")].iter().enumerate() {
-        let label = format!(" {} {name} ", i + 1);
+    let unread = a.unread_total();
+    let tabs = [(Tab::Search, "Search"), (Tab::Downloads, "Downloads"), (Tab::Uploads, "Uploads"), (Tab::History, "History"), (Tab::Messages, "Messages")];
+    for (i, (t, name)) in tabs.iter().enumerate() {
+        let label = if *t == Tab::Messages && unread > 0 { format!(" {} {name} ({unread}) ", i + 1) } else { format!(" {} {name} ", i + 1) };
         left.push(if a.tab == *t { Span::styled(label, Style::default().fg(ACCENT).bold().underlined()) } else { Span::styled(label, dim()) });
     }
 
@@ -68,7 +71,13 @@ fn render_top(f: &mut Frame, a: &App, r: Rect) {
                 right.push(Span::styled(format!("● {}", s.server.state), Style::default().fg(Color::Yellow)));
             }
             if let Some(p) = a.port {
-                right.push(Span::styled(format!("  :{p}"), dim()));
+                // Colored once a port test has run (P).
+                let style = match &a.port_test {
+                    Some((true, _)) => Style::default().fg(Color::Green),
+                    Some((false, _)) => Style::default().fg(Color::Red),
+                    None => dim(),
+                };
+                right.push(Span::styled(format!("  :{p}"), style));
             }
             let sh = &s.shares;
             let shares = if sh.scanning { format!("  scanning {:.0}%", sh.scan_progress * 100.0) } else { format!("  {} shared", sh.files) };
@@ -77,6 +86,9 @@ fn render_top(f: &mut Frame, a: &App, r: Rect) {
     }
     let ad = a.downloads_raw().iter().filter(|t| t.is_active()).count();
     let au = a.uploads_raw().iter().filter(|t| t.is_active()).count();
+    if unread > 0 {
+        right.push(Span::styled(format!("  ✉ {unread}"), Style::default().fg(Color::Yellow).bold()));
+    }
     right.push(Span::styled(format!("  ↓{ad}"), Style::default().fg(if ad > 0 { ACCENT } else { DIM })));
     right.push(Span::styled(format!(" ↑{au} "), Style::default().fg(if au > 0 { Color::Green } else { DIM })));
 
@@ -93,7 +105,10 @@ fn render_bottom(f: &mut Frame, a: &App, r: Rect) {
         (_, Tab::Search) => "/ search  Enter download  a whole folder  f filter  v files/folders  s sort  o output folder  r re-run  ? help",
         (_, Tab::Downloads) => "c cancel  R retry failed  x clear finished  h show/hide old  ? help",
         (_, Tab::Uploads) => "Enter user details  b ban  c cancel  x clear finished  h show/hide old  ? help",
-        (_, Tab::History) => "u unban selected  ↑↓ select ban  ? help",
+        (Mode::Compose(_), _) => "Enter send  Esc cancel  Ctrl-U clear",
+        (Mode::NewConversation(_), _) => "type a username, Enter to start writing  Esc cancel",
+        (_, Tab::History) => "u unban selected  ↑↓ select ban  P check port  ? help",
+        (_, Tab::Messages) => "Enter reply  n new message  b ban  d close conversation  P check port  ? help",
     };
     let mut spans = vec![];
     if let Some((msg, at, err)) = &a.status {
@@ -388,6 +403,124 @@ fn render_history(f: &mut Frame, a: &mut App, r: Rect) {
     }
 }
 
+// ---------- messages ----------
+
+/// Hard-wrap text to `width` display columns.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(8);
+    let mut out = vec![];
+    for para in text.split('\n') {
+        let mut line = String::new();
+        let mut w = 0;
+        for word in para.split(' ') {
+            let ww = word.width();
+            if w > 0 && w + 1 + ww > width {
+                out.push(std::mem::take(&mut line));
+                w = 0;
+            }
+            if ww > width {
+                // A single overlong word: break it by characters.
+                for ch in word.chars() {
+                    let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                    if w + cw > width {
+                        out.push(std::mem::take(&mut line));
+                        w = 0;
+                    }
+                    line.push(ch);
+                    w += cw;
+                }
+                continue;
+            }
+            if w > 0 {
+                line.push(' ');
+                w += 1;
+            }
+            line.push_str(word);
+            w += ww;
+        }
+        out.push(line);
+    }
+    out
+}
+
+fn render_messages(f: &mut Frame, a: &mut App, r: Rect) {
+    let [list_r, thread_r] = Layout::horizontal([Constraint::Length(30), Constraint::Min(20)]).areas(r);
+
+    let rows: Vec<Row> = a
+        .convs
+        .iter()
+        .map(|c| {
+            let unread = c.conv.un_acknowledged_message_count;
+            let when = c.last.as_ref().and_then(|m| m.timestamp).map(fmt_ago).unwrap_or_default();
+            let name = if unread > 0 {
+                Cell::from(Line::from(vec![Span::styled(fmt::trunc(&c.conv.username, 18), Style::default().bold()), Span::styled(format!(" {unread}"), Style::default().fg(Color::Yellow).bold())]))
+            } else {
+                Cell::from(fmt::trunc(&c.conv.username, 20))
+            };
+            Row::new(vec![name, Cell::from(when).style(dim())])
+        })
+        .collect();
+    let empty = rows.is_empty();
+    f.render_stateful_widget(
+        Table::new(rows, [Constraint::Min(10), Constraint::Length(5)]).block(block("Conversations")).row_highlight_style(highlight()).highlight_symbol("▌"),
+        list_r,
+        &mut a.tables[Tab::Messages.index()],
+    );
+    if empty {
+        f.render_widget(Paragraph::new(" none yet — n to write").style(dim()), Rect { x: list_r.x + 1, y: list_r.y + 1, width: list_r.width.saturating_sub(2), height: 1 });
+    }
+
+    let composing = matches!(a.mode, Mode::Compose(_));
+    let [msgs_r, input_r] = Layout::vertical([Constraint::Min(3), Constraint::Length(if composing { 3 } else { 0 })]).areas(thread_r);
+    let Some(user) = a.thread_user.clone() else {
+        f.render_widget(Paragraph::new("\n  Select a conversation, or press n to message someone.").style(dim()).block(block("")), msgs_r);
+        return;
+    };
+    let inner_w = msgs_r.width.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = vec![];
+    let mut last_day = String::new();
+    for m in &a.thread {
+        let local = m.timestamp.map(|t| t.with_timezone(&Local));
+        let day = local.map(|t| t.format("%A, %b %d").to_string()).unwrap_or_default();
+        if day != last_day {
+            lines.push(Line::from(Span::styled(format!("── {day} ──"), dim())));
+            last_day = day;
+        }
+        let (who, color) = if m.is_incoming() { (user.as_str(), ACCENT) } else { ("you", QUALITY) };
+        let time = local.map(|t| t.format("%H:%M").to_string()).unwrap_or_default();
+        lines.push(Line::from(vec![Span::styled(format!("{time} "), dim()), Span::styled(who.to_string(), Style::default().fg(color).bold())]));
+        for l in wrap(&m.message, inner_w.saturating_sub(2)) {
+            lines.push(Line::from(format!("  {l}")));
+        }
+    }
+    if a.thread.is_empty() {
+        lines.push(Line::from(Span::styled("no messages yet — Enter to write one", dim())));
+    }
+    // Stick to the bottom (newest messages).
+    let height = msgs_r.height.saturating_sub(2) as usize;
+    let scroll = lines.len().saturating_sub(height) as u16;
+    f.render_widget(Paragraph::new(lines).scroll((scroll, 0)).block(block(user.clone())), msgs_r);
+
+    if let Mode::Compose(buf) = &a.mode {
+        // Show the tail of long drafts.
+        let w = input_r.width.saturating_sub(2) as usize;
+        let shown = fmt::trunc_left(buf, w.saturating_sub(1));
+        f.render_widget(Paragraph::new(shown.as_str()).block(block(format!("To {user}")).border_style(Style::default().fg(ACCENT))), input_r);
+        f.set_cursor_position((input_r.x + 1 + shown.width() as u16, input_r.y + 1));
+    }
+}
+
+/// "5m", "3h", "2d".
+fn fmt_ago(t: chrono::DateTime<chrono::Utc>) -> String {
+    let s = (chrono::Utc::now() - t).num_seconds().max(0);
+    match s {
+        0..=59 => "now".into(),
+        60..=3599 => format!("{}m", s / 60),
+        3600..=86399 => format!("{}h", s / 3600),
+        _ => format!("{}d", s / 86400),
+    }
+}
+
 // ---------- popups ----------
 
 fn centered(r: Rect, w: u16, h: u16) -> Rect {
@@ -425,6 +558,12 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
                 ("", ""),
                 ("History", ""),
                 ("u", "unban selected user"),
+                ("", ""),
+                ("Messages", ""),
+                ("Enter / r", "reply to the selected conversation"),
+                ("n", "message someone new"),
+                ("b / d", "ban the user / close the conversation"),
+                ("P (anywhere)", "check your port with Soulseek's port tester"),
             ];
             let text: Vec<Line> = lines
                 .iter()
@@ -495,6 +634,13 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
                 hist_r,
             );
         }
-        Mode::Normal | Mode::SearchInput => {}
+        Mode::NewConversation(buf) => {
+            let r = centered(area, 60, 5);
+            f.render_widget(Clear, r);
+            let text = vec![Line::from(Span::styled("Send a message to (Soulseek username):", dim())), Line::from(buf.as_str())];
+            f.render_widget(Paragraph::new(text).block(block("New message")), r);
+            f.set_cursor_position((r.x + 1 + buf.width() as u16, r.y + 2));
+        }
+        Mode::Normal | Mode::SearchInput | Mode::Compose(_) => {}
     }
 }

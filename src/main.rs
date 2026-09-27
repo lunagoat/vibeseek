@@ -146,6 +146,27 @@ pub enum Cmd {
         /// Only print the detected / current port
         #[arg(long)]
         show: bool,
+        /// Test whether peers can actually reach you (Soulseek's own port tester)
+        #[arg(short, long)]
+        check: bool,
+        /// Open Soulseek's port test page in your browser (like SoulseekQT's "Check ports")
+        #[arg(long)]
+        open: bool,
+    },
+    /// Private messages: list conversations, or read one (marks it read)
+    #[command(alias = "inbox")]
+    Messages {
+        /// Show this conversation
+        user: Option<String>,
+        /// Hide a conversation (it comes back if they write again)
+        #[arg(long)]
+        close: bool,
+    },
+    /// Send a private message
+    Msg {
+        user: String,
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
     },
     /// Control the slskd background service
     Daemon {

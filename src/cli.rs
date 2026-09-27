@@ -58,7 +58,19 @@ pub async fn run(cli: Cli) -> Result<()> {
             crate::SpotifyAction::Logout => crate::playlist::logout(),
         },
         Cmd::Csv(args) => crate::csvjob::run(&cfg, args).await,
-        Cmd::Port { port, show } => cmd_port(&cfg, port, show).await,
+        Cmd::Port { port, show, check, open } => {
+            if check || open {
+                cmd_port_check(&cfg, open).await
+            } else {
+                cmd_port(&cfg, port, show).await
+            }
+        }
+        Cmd::Messages { user, close } => cmd_messages(&cfg, user.as_deref(), close).await,
+        Cmd::Msg { user, text } => {
+            Client::new(&cfg)?.send_message(&user, &text.join(" ")).await?;
+            println!("sent to {user}");
+            Ok(())
+        }
         Cmd::Daemon { action } => crate::daemon::run(&cfg, action),
         Cmd::Agent { action } => crate::agent::run(&cfg, action).await,
         Cmd::Status => cmd_status(&cfg).await,
@@ -680,6 +692,79 @@ async fn cmd_port(cfg: &Config, port: Option<u16>, show: bool) -> Result<()> {
             println!("reconnected slskd so the server learns the new port");
         }
     }
+    Ok(())
+}
+
+async fn cmd_port_check(cfg: &Config, open: bool) -> Result<()> {
+    let port = slskdcfg::listen_port(&cfg.slskd_yml())?;
+    if open {
+        let url = crate::port::test_url(port);
+        let _ = std::process::Command::new("xdg-open").arg(&url).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+        println!("opened {url}");
+        return Ok(());
+    }
+    let route = if crate::port::vpn_up(cfg) { "through the VPN" } else { "through your home router" };
+    println!("testing port {port} {route}…");
+    let t = crate::port::test(port).await?;
+    if t.open {
+        println!("\x1b[32m✓ open\x1b[0m  {}", t.message);
+    } else {
+        println!("\x1b[31m✗ not reachable\x1b[0m  {}", t.message);
+        println!("peers can't connect to you, so searches return little and uploads can't start. Try `vibeseek port` to re-sync, and check `vibeseek port --show`.");
+    }
+    Ok(())
+}
+
+fn when(t: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    t.map(|d| d.with_timezone(&chrono::Local).format("%b %d %H:%M").to_string()).unwrap_or_default()
+}
+
+async fn cmd_messages(cfg: &Config, user: Option<&str>, close: bool) -> Result<()> {
+    let client = Client::new(cfg)?;
+    if let Some(u) = user {
+        if close {
+            client.close_conversation(u).await?;
+            println!("closed conversation with {u}");
+            return Ok(());
+        }
+        let msgs = client.messages(u).await?;
+        if msgs.is_empty() {
+            println!("no messages with {u} — send one with `vibeseek msg {u} <text>`");
+        }
+        for m in &msgs {
+            let who = if m.is_incoming() { format!("\x1b[36m{u}\x1b[0m") } else { "\x1b[35myou\x1b[0m".into() };
+            println!("\x1b[2m{}\x1b[0m  {who}: {}", when(m.timestamp), m.message);
+        }
+        client.ack_conversation(u).await.ok();
+        return Ok(());
+    }
+    let mut convs = client.conversations().await?;
+    if convs.is_empty() {
+        println!("no conversations");
+        return Ok(());
+    }
+    // Newest activity first, unread on top.
+    let mut rows = vec![];
+    for c in convs.drain(..) {
+        let last = client.messages(&c.username).await.ok().and_then(|m| m.last().cloned());
+        rows.push((c, last));
+    }
+    rows.sort_by_key(|(c, l)| (c.un_acknowledged_message_count == 0, std::cmp::Reverse(l.as_ref().and_then(|m| m.timestamp))));
+    let mut t = table();
+    header(&mut t, &["user", "unread", "last", "message"]);
+    let w = term_width().saturating_sub(45).max(20);
+    for (c, last) in &rows {
+        let unread = c.un_acknowledged_message_count;
+        let preview = last.as_ref().map(|m| format!("{}{}", if m.is_incoming() { "" } else { "you: " }, m.message.replace('\n', " "))).unwrap_or_default();
+        t.add_row(vec![
+            if unread > 0 { Cell::new(&c.username).add_attribute(Attribute::Bold) } else { Cell::new(&c.username) },
+            if unread > 0 { Cell::new(unread).fg(Color::Yellow) } else { Cell::new("") },
+            Cell::new(when(last.as_ref().and_then(|m| m.timestamp))).fg(Color::DarkGrey),
+            Cell::new(fmt::trunc(&preview, w)),
+        ]);
+    }
+    println!("{t}");
+    println!("\n\x1b[2mread one: vibeseek messages <user>   reply: vibeseek msg <user> <text>\x1b[0m");
     Ok(())
 }
 

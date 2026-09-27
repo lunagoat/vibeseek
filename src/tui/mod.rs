@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use crate::api::{self, AppState, Client, SearchFile, SearchResponse, Transfer};
+use crate::api::{self, AppState, Client, Conversation, PrivateMessage, SearchFile, SearchResponse, Transfer};
 use crate::config::Config;
 use crate::download::{self, Target};
 use crate::history::{self, History};
@@ -24,15 +24,16 @@ pub enum Tab {
     Downloads,
     Uploads,
     History,
+    Messages,
 }
 
 impl Tab {
-    const ALL: [Tab; 4] = [Tab::Search, Tab::Downloads, Tab::Uploads, Tab::History];
+    const ALL: [Tab; 5] = [Tab::Search, Tab::Downloads, Tab::Uploads, Tab::History, Tab::Messages];
     fn index(self) -> usize {
         Self::ALL.iter().position(|t| *t == self).unwrap()
     }
     fn cycle(self, d: isize) -> Tab {
-        Self::ALL[(self.index() as isize + d).rem_euclid(4) as usize]
+        Self::ALL[(self.index() as isize + d).rem_euclid(Self::ALL.len() as isize) as usize]
     }
 }
 
@@ -44,6 +45,10 @@ pub enum Mode {
     OutputPrompt(String),
     ConfirmBan(String),
     UserDetail(String, Vec<history::Row>),
+    /// Typing a private message to the open conversation.
+    Compose(String),
+    /// Typing the username for a new conversation.
+    NewConversation(String),
     Help,
 }
 
@@ -57,6 +62,15 @@ enum Msg {
     Error(String),
     History(Box<HistData>),
     UserDetail(String, Vec<history::Row>),
+    Conversations(Vec<ConvRow>),
+    Thread(String, Vec<PrivateMessage>),
+    PortTest(bool, String),
+}
+
+/// A conversation plus its latest message (for sorting and previews).
+pub struct ConvRow {
+    pub conv: Conversation,
+    pub last: Option<PrivateMessage>,
 }
 
 #[derive(Default)]
@@ -103,9 +117,16 @@ pub struct App {
     // history
     pub hist: HistData,
     last_hist: Instant,
+    // messages
+    pub convs: Vec<ConvRow>,
+    /// Conversation shown on the right (also what the background worker keeps fresh).
+    pub thread_user: Option<String>,
+    pub thread: Vec<PrivateMessage>,
+    open_conv: tokio::sync::watch::Sender<Option<String>>,
     // ui
     pub status: Option<(String, Instant, bool)>,
-    pub tables: [TableState; 4],
+    pub tables: [TableState; 5],
+    pub port_test: Option<(bool, String)>,
 }
 
 pub const SORTS: [&str; 4] = ["best", "size", "speed", "peer"];
@@ -114,6 +135,7 @@ pub async fn run(cfg: Config) -> Result<()> {
     let client = Client::new(&cfg)?;
     let (tx, mut rx) = mpsc::unbounded_channel();
     let preset_names: Vec<String> = cfg.presets.keys().cloned().collect();
+    let (open_conv, open_rx) = tokio::sync::watch::channel(None);
     let mut app = App {
         preset: preset_names.iter().position(|k| *k == cfg.search.default_preset).unwrap_or(0),
         preset_names,
@@ -143,17 +165,52 @@ pub async fn run(cfg: Config) -> Result<()> {
         progress: (0, 0),
         hist: HistData::default(),
         last_hist: Instant::now() - Duration::from_secs(60),
+        convs: vec![],
+        thread_user: None,
+        thread: vec![],
+        open_conv,
         status: None,
         tables: Default::default(),
+        port_test: None,
     };
-    spawn_workers(&app);
+    spawn_workers(&app, open_rx);
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, &mut app, &mut rx).await;
     ratatui::restore();
     result
 }
 
-fn spawn_workers(a: &App) {
+fn spawn_workers(a: &App, mut open_rx: tokio::sync::watch::Receiver<Option<String>>) {
+    // Conversations every few seconds; the open one is fetched (and marked read) right away
+    // whenever it changes.
+    let (c, tx) = (a.client.clone(), a.tx.clone());
+    tokio::spawn(async move {
+        loop {
+            if let Ok(convs) = c.conversations().await {
+                let mut rows = vec![];
+                for conv in convs {
+                    let last = c.messages(&conv.username).await.ok().and_then(|m| m.last().cloned());
+                    rows.push(ConvRow { conv, last });
+                }
+                rows.sort_by_key(|r| (r.conv.un_acknowledged_message_count == 0, std::cmp::Reverse(r.last.as_ref().and_then(|m| m.timestamp))));
+                if tx.send(Msg::Conversations(rows)).is_err() {
+                    break;
+                }
+            }
+            let open = open_rx.borrow_and_update().clone();
+            if let Some(u) = open {
+                if let Ok(msgs) = c.messages(&u).await {
+                    if msgs.iter().any(|m| m.is_incoming()) {
+                        let _ = c.ack_conversation(&u).await;
+                    }
+                    let _ = tx.send(Msg::Thread(u, msgs));
+                }
+            }
+            // Wake early when a different conversation is opened.
+            let _ = tokio::time::timeout(Duration::from_secs(4), open_rx.changed()).await;
+        }
+    });
+
     // Transfers every second; record finished uploads into history as we see them.
     let (c, tx) = (a.client.clone(), a.tx.clone());
     tokio::spawn(async move {
@@ -279,6 +336,30 @@ impl App {
                 let st = &mut self.tables[Tab::History.index()];
                 st.select(if n == 0 { None } else { Some(st.selected().unwrap_or(0).min(n - 1)) });
             }
+            Msg::Conversations(rows) => {
+                // Keep the same conversation selected as the order changes.
+                let sel = self.selected(Tab::Messages).and_then(|i| self.convs.get(i)).map(|r| r.conv.username.clone());
+                self.convs = rows;
+                let idx = sel.and_then(|u| self.convs.iter().position(|r| r.conv.username == u));
+                let n = self.convs.len();
+                self.tables[Tab::Messages.index()].select(match idx {
+                    Some(i) => Some(i),
+                    None if n > 0 => Some(0),
+                    None => None,
+                });
+                if self.tab == Tab::Messages {
+                    self.sync_open_conversation();
+                }
+            }
+            Msg::Thread(user, msgs) => {
+                if self.thread_user.as_deref() == Some(user.as_str()) {
+                    self.thread = msgs;
+                }
+            }
+            Msg::PortTest(open, message) => {
+                self.port_test = Some((open, message.clone()));
+                if open { self.say(format!("port open ✓ {message}")) } else { self.err(format!("port NOT reachable: {message}")) }
+            }
             Msg::UserDetail(user, rows) => self.mode = Mode::UserDetail(user, rows),
         }
     }
@@ -354,6 +435,7 @@ impl App {
             Tab::Downloads => self.dl_view.len(),
             Tab::Uploads => self.ul_view.len(),
             Tab::History => self.hist.bans.len(),
+            Tab::Messages => self.convs.len(),
         }
     }
 
@@ -513,6 +595,76 @@ impl App {
         self.refresh_history();
     }
 
+    /// Show the selected conversation (the worker fetches it and marks it read).
+    fn sync_open_conversation(&mut self) {
+        let user = self.selected(Tab::Messages).and_then(|i| self.convs.get(i)).map(|r| r.conv.username.clone());
+        // A brand-new conversation (from `n`) stays open until it shows up in the list.
+        let user = match (&self.thread_user, user) {
+            (Some(open), _) if !self.convs.iter().any(|r| &r.conv.username == open) => Some(open.clone()),
+            (_, u) => u,
+        };
+        if user != self.thread_user {
+            self.thread.clear();
+            self.thread_user = user.clone();
+        }
+        self.open_conv.send_if_modified(|cur| {
+            if *cur != user {
+                *cur = user;
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    fn send_message(&mut self, text: String) {
+        let Some(user) = self.thread_user.clone() else { return };
+        let c = self.client.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            match c.send_message(&user, &text).await {
+                Ok(()) => {
+                    if let Ok(msgs) = c.messages(&user).await {
+                        let _ = tx.send(Msg::Thread(user.clone(), msgs));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Msg::Error(format!("couldn't send to {user}: {e}")));
+                }
+            }
+        });
+    }
+
+    fn close_selected_conversation(&mut self) {
+        let Some(user) = self.thread_user.clone() else { return };
+        let c = self.client.clone();
+        self.spawn_simple(async move {
+            c.close_conversation(&user).await?;
+            Ok(format!("closed conversation with {user}"))
+        });
+        self.thread_user = None;
+        self.thread.clear();
+    }
+
+    fn check_port(&mut self) {
+        let Some(port) = self.port.filter(|p| *p > 0) else {
+            self.err("listen port unknown yet");
+            return;
+        };
+        self.say(format!("testing port {port} with Soulseek's port checker…"));
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(match crate::port::test(port).await {
+                Ok(t) => Msg::PortTest(t.open, t.message),
+                Err(e) => Msg::Error(format!("port test failed: {e:#}")),
+            });
+        });
+    }
+
+    pub fn unread_total(&self) -> u32 {
+        self.convs.iter().map(|r| r.conv.un_acknowledged_message_count).sum()
+    }
+
     // ---------- keys ----------
 
     /// Returns true to quit.
@@ -583,6 +735,35 @@ impl App {
                 }
                 return false;
             }
+            Mode::Compose(_) | Mode::NewConversation(_) => {
+                let composing = matches!(self.mode, Mode::Compose(_));
+                let (Mode::Compose(buf) | Mode::NewConversation(buf)) = &mut self.mode else { unreachable!() };
+                match k.code {
+                    KeyCode::Esc => self.mode = Mode::Normal,
+                    KeyCode::Enter => {
+                        let text = std::mem::take(buf).trim().to_string();
+                        self.mode = Mode::Normal;
+                        if text.is_empty() {
+                            return false;
+                        }
+                        if composing {
+                            self.send_message(text);
+                        } else {
+                            self.thread_user = Some(text.clone());
+                            self.thread.clear();
+                            let _ = self.open_conv.send(Some(text));
+                            self.mode = Mode::Compose(String::new());
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        buf.pop();
+                    }
+                    KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => buf.clear(),
+                    KeyCode::Char(c) => buf.push(c),
+                    _ => {}
+                }
+                return false;
+            }
             Mode::Help => {
                 self.mode = Mode::Normal;
                 return false;
@@ -594,7 +775,8 @@ impl App {
         match k.code {
             KeyCode::Char('q') => return true,
             KeyCode::Char('?') => self.mode = Mode::Help,
-            KeyCode::Char(c @ '1'..='4') => self.tab = Tab::ALL[c as usize - '1' as usize],
+            KeyCode::Char(c @ '1'..='5') => self.tab = Tab::ALL[c as usize - '1' as usize],
+            KeyCode::Char('P') => self.check_port(),
             KeyCode::Tab => self.tab = self.tab.cycle(1),
             KeyCode::BackTab => self.tab = self.tab.cycle(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_sel(1),
@@ -629,10 +811,32 @@ impl App {
                         self.unban_selected();
                     }
                 }
+                Tab::Messages => match k.code {
+                    KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('i') => {
+                        if self.thread_user.is_some() {
+                            self.mode = Mode::Compose(String::new());
+                        }
+                    }
+                    KeyCode::Char('n') => self.mode = Mode::NewConversation(String::new()),
+                    KeyCode::Char('d') => self.close_selected_conversation(),
+                    KeyCode::Char('b') => {
+                        if let Some(u) = self.thread_user.clone() {
+                            self.mode = Mode::ConfirmBan(u);
+                        }
+                    }
+                    _ => {}
+                },
             },
         }
         if self.tab == Tab::History && prev != Tab::History {
             self.refresh_history();
+        }
+        if self.tab == Tab::Messages {
+            self.sync_open_conversation();
+        } else if prev == Tab::Messages {
+            // Leaving the tab: stop marking incoming messages as read.
+            let _ = self.open_conv.send(None);
+            self.thread_user = None;
         }
         false
     }

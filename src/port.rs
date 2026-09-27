@@ -160,3 +160,41 @@ pub fn step(cfg: &Config, st: &mut PortState) -> Result<Step> {
     st.route = Some(Route::Upnp);
     Ok(Step { route: Route::Upnp, result, note })
 }
+
+/// The page SoulseekQT's "Check ports" opens. It tests whichever IP makes the request, which is
+/// the same route slskd's traffic takes (VPN or home connection).
+pub fn test_url(port: u16) -> String {
+    format!("http://tools.slsknet.org/porttest.php?port={port}")
+}
+
+pub struct PortTest {
+    pub open: bool,
+    /// The service's verdict, e.g. "IP: 1.2.3.4 Port: 41193/tcp open. Your router and …"
+    pub message: String,
+}
+
+/// Ask Soulseek's port tester whether peers can reach `port`.
+pub async fn test(port: u16) -> Result<PortTest> {
+    let http = reqwest::Client::builder().timeout(Duration::from_secs(20)).build()?;
+    let html = http.get(test_url(port)).send().await.context("contacting the Soulseek port tester")?.text().await?;
+    let mut text = String::new();
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                text.push(' ');
+            }
+            _ if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let start = text.find("IP:").context("unexpected reply from the port tester")?;
+    let rest = &text[start..];
+    let end = rest.find("Don't forget").unwrap_or(rest.len());
+    let message = rest[..end].trim().to_string();
+    let open = message.contains("tcp open");
+    Ok(PortTest { open, message })
+}
