@@ -65,6 +65,14 @@ vibeseek csv liked_songs.csv --retry --fallback lossy-ok
 - It's safe to Ctrl-C and rerun: finished rows, and files already in the output folder, are skipped.
 - Soulseek bans clients that search too fast, so it stays under 34 searches per 220s. A 2,500-row CSV takes about 4.5 hours.
 
+### Where the files go
+
+Each CSV or playlist gets its own folder under `~/Music/vibeseek/` (`csv.output_root` in config.toml), named after the CSV file or playlist. Rerunning the same input always reuses its folder:
+
+- A CSV is identified by its path. A link is identified by the playlist, album or video it points to, so re-copied share links (`?si=…`) count as the same input.
+- The folder is remembered in the input's progress file, and the folder carries a hidden `.vibeseek-source` tag. If two different playlists have the same name, the second gets a short ID appended: `Chill [3fa9c1]`.
+- `-o <folder>` puts a run somewhere else, and that choice is remembered for later runs.
+
 ### Spotify and YouTube links
 
 Instead of a CSV you can pass a link; everything else works the same (filters, resume, `--status`, `--retry`). `vibeseek playlist` is an alias for `vibeseek csv`.
@@ -78,7 +86,7 @@ vibeseek playlist "https://www.youtube.com/playlist?list=…"    # YouTube / You
 
 - **Spotify:** uses the developer app in `[spotify]` in config.toml. Spotify only shows playlist contents to logged-in users, so run `vibeseek spotify login` once. It opens your browser, and the login is remembered (`vibeseek spotify logout` forgets it). The app must have `http://127.0.0.1:8888/callback` as a Redirect URI.
 - **YouTube:** video titles like "Artist - Song (Official Video) [4K]" become artist "Artist", title "Song". For "Artist - Topic" auto-generated channels, the channel is the artist.
-- The link is fetched again on every run, so tracks added to the playlist later are picked up when you rerun it. Files go to `~/Music/downloads/<playlist name>/` unless you pass `-o`.
+- The link is fetched again on every run, so tracks added to the playlist later are picked up when you rerun it. Files go to `~/Music/vibeseek/<playlist name>/` unless you pass `-o`.
 
 
 ## Uploads
