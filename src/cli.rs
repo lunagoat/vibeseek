@@ -53,6 +53,10 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
+        Cmd::Spotify { action } => match action {
+            crate::SpotifyAction::Login => crate::playlist::login(&cfg).await,
+            crate::SpotifyAction::Logout => crate::playlist::logout(),
+        },
         Cmd::Csv(args) => crate::csvjob::run(&cfg, args).await,
         Cmd::Port { port, show } => cmd_port(&cfg, port, show).await,
         Cmd::Daemon { action } => crate::daemon::run(&cfg, action),

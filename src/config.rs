@@ -14,6 +14,7 @@ pub struct Config {
     pub port: PortConfig,
     pub search: SearchConfig,
     pub csv: CsvConfig,
+    pub spotify: SpotifyConfig,
     /// Preference ranking applied to every search (never hides results).
     pub prefs: Prefs,
     /// Named filter presets; `search.default_preset` picks the default.
@@ -45,6 +46,22 @@ pub struct PortConfig {
     /// When the VPN is down, open a port on the home router via UPnP (like Nicotine+).
     pub upnp: bool,
     pub upnp_port: u16,
+}
+
+/// A Spotify developer app (https://developer.spotify.com/dashboard), for playlist links.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpotifyConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    /// Must match a Redirect URI registered on the app.
+    pub redirect_uri: String,
+}
+
+impl Default for SpotifyConfig {
+    fn default() -> Self {
+        Self { client_id: String::new(), client_secret: String::new(), redirect_uri: "http://127.0.0.1:8888/callback".into() }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +121,7 @@ impl Default for Config {
             port: PortConfig::default(),
             search: SearchConfig::default(),
             csv: CsvConfig::default(),
+            spotify: SpotifyConfig::default(),
             prefs: Prefs::default(),
             presets,
         }

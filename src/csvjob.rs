@@ -500,14 +500,12 @@ struct JobState {
     rows: BTreeMap<String, RowState>,
 }
 
-fn state_path(csv: &Path) -> PathBuf {
+/// Progress file for a source (`key` = CSV path or playlist link, `stem` = display name).
+fn state_path(key: &str, stem: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    csv.hash(&mut h);
-    let stem = csv
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "csv".into());
+    key.hash(&mut h);
+    let stem: String = stem.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).take(60).collect();
     let dir = config::data_dir().join("csv");
     let _ = std::fs::create_dir_all(&dir);
     dir.join(format!("{stem}-{:08x}.json", h.finish() as u32))
@@ -597,6 +595,13 @@ impl Limiter {
             tokio::time::sleep(wait).await;
         }
     }
+}
+
+/// A playlist name usable as a folder name.
+fn sanitize_name(name: &str) -> String {
+    let s: String = name.chars().map(|c| if matches!(c, '/' | '\\' | '\0') { '_' } else { c }).collect();
+    let s = s.trim().trim_matches('.').trim().to_string();
+    if s.is_empty() { "playlist".into() } else { s }
 }
 
 // ---------- runner ----------
@@ -1019,30 +1024,46 @@ fn print_status(rows: &[Row], st: &JobState) {
 }
 
 pub async fn run(cfg: &Config, args: CsvArgs) -> Result<()> {
-    let csv_path = config::expand(&args.file)
-        .canonicalize()
-        .with_context(|| format!("{} not found", args.file))?;
-    let rows = read_rows(&csv_path, &args)?;
-    let spath = state_path(&csv_path);
+    // A CSV file, or a Spotify/YouTube link (re-fetched each run so added tracks get picked up).
+    let (rows, key, stem, source_label) = if crate::playlist::is_url(&args.file) {
+        eprint!("fetching track list… ");
+        let pl = crate::playlist::fetch(cfg, &args.file).await?;
+        eprintln!("{} tracks", pl.rows.len());
+        let mut rows = pl.rows;
+        if args.albums {
+            for r in &mut rows {
+                r.title.clear();
+                r.length = None;
+            }
+            let mut seen = HashSet::new();
+            rows.retain(|r| !r.album.is_empty() && seen.insert(r.key()));
+        }
+        let stem = sanitize_name(&pl.name);
+        (rows, args.file.clone(), stem, format!("{} ({})", pl.name, args.file))
+    } else {
+        let csv_path = config::expand(&args.file)
+            .canonicalize()
+            .with_context(|| format!("{} not found", args.file))?;
+        let rows = read_rows(&csv_path, &args)?;
+        let stem = csv_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "csv".into());
+        (rows, csv_path.display().to_string(), stem, config::tilde(&csv_path))
+    };
+    let spath = state_path(&key, &stem);
     if args.restart {
         let _ = std::fs::remove_file(&spath);
     }
     let mut st = load_state(&spath);
 
-    let stem = csv_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "csv".into());
     let out_dir = match (&args.output, st.output.is_empty()) {
         (Some(o), _) => config::expand(o),
         (None, false) => PathBuf::from(&st.output),
         (None, true) => cfg.downloads_dir().join(&stem),
     };
-    st.csv = csv_path.display().to_string();
+    st.csv = key.clone();
     st.output = out_dir.display().to_string();
 
     if args.status {
-        println!("{} → {}", config::tilde(&csv_path), config::tilde(&out_dir));
+        println!("{} → {}", source_label, config::tilde(&out_dir));
         print_status(&rows, &st);
         let bad: Vec<_> = rows
             .iter()
@@ -1120,7 +1141,7 @@ pub async fn run(cfg: &Config, args: CsvArgs) -> Result<()> {
         .count();
     println!(
         "\x1b[1m{}\x1b[0m → {}",
-        config::tilde(&csv_path),
+        source_label,
         config::tilde(&out_dir)
     );
     print_status(&rows, &st);

@@ -7,6 +7,7 @@ mod daemon;
 mod download;
 mod fmt;
 mod history;
+mod playlist;
 mod port;
 mod quality;
 mod search;
@@ -130,7 +131,13 @@ pub enum Cmd {
     Unban { user: String },
     /// List banned users
     Bans,
-    /// Batch download from a CSV (Spotify exports etc.), like sockseek
+    /// Log in to Spotify (needed for playlist links and `spotify-likes`)
+    Spotify {
+        #[command(subcommand)]
+        action: SpotifyAction,
+    },
+    /// Batch download from a CSV, or a Spotify / YouTube playlist link, like sockseek
+    #[command(alias = "playlist")]
     Csv(CsvArgs),
     /// Show or set the Soulseek listen port (auto-detects ProtonVPN forwarding)
     Port {
@@ -178,6 +185,14 @@ pub enum TransferAction {
 }
 
 #[derive(Subcommand, Clone, Copy)]
+pub enum SpotifyAction {
+    /// Authorize vibeseek in your browser (one time)
+    Login,
+    /// Forget the saved Spotify login
+    Logout,
+}
+
+#[derive(Subcommand, Clone, Copy)]
 pub enum DaemonAction {
     Start,
     Stop,
@@ -199,9 +214,9 @@ pub enum AgentAction {
 
 #[derive(Args, Clone)]
 pub struct CsvArgs {
-    /// CSV file
+    /// CSV file, or a Spotify playlist/album/track or YouTube playlist/video link
     pub file: String,
-    /// Output folder (default: <downloads>/<csv name>)
+    /// Output folder (default: <downloads>/<csv or playlist name>)
     #[arg(short, long)]
     pub output: Option<String>,
     #[command(flatten)]

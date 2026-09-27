@@ -4,7 +4,7 @@ Soulseek from the terminal. A CLI + TUI frontend for [slskd](https://github.com/
 
 - **Search** the network, with quality filters (lossless-first by default, like your sockseek config)
 - **Download** single files or whole folders into any folder you choose
-- **CSV batch mode**: Spotify exports and sockseek-style lists, resumable, with automatic retry from other sources
+- **CSV / playlist batch mode**: CSVs, Spotify playlists/albums/liked songs, YouTube playlists; resumable, with automatic retry from other sources
 - **Upload monitoring**: who's downloading from you, live progress and speed, permanent history and stats, cancel and ban
 
 ```
@@ -49,7 +49,7 @@ vibeseek csv ~/Desktop/liked_songs.csv -o ~/Music/liked --fallback lossy-ok
 
 In the TUI, press `/` to search and `Enter` to download. `v` toggles the files/folders view, `f` cycles filters, and `o` sets the output folder. Press `?` for all keys.
 
-## CSV batch mode
+## CSV and playlist batch mode
 
 ```
 vibeseek csv liked_songs.csv                  # → ~/Music/downloads/liked_songs/
@@ -64,6 +64,22 @@ vibeseek csv liked_songs.csv --retry --fallback lossy-ok
 - A failed or stuck transfer (queued for 15 minutes without starting) moves on to the next best source, up to 3 tries.
 - It's safe to Ctrl-C and rerun: finished rows, and files already in the output folder, are skipped.
 - Soulseek bans clients that search too fast, so it stays under 34 searches per 220s. A 2,500-row CSV takes about 4.5 hours.
+
+### Spotify and YouTube links
+
+Instead of a CSV you can pass a link; everything else works the same (filters, resume, `--status`, `--retry`). `vibeseek playlist` is an alias for `vibeseek csv`.
+
+```
+vibeseek playlist "https://open.spotify.com/playlist/…"       # needs `vibeseek spotify login` once
+vibeseek playlist spotify-likes                                # your Liked Songs (needs login)
+vibeseek playlist "https://open.spotify.com/album/…"           # albums/tracks work without login
+vibeseek playlist "https://www.youtube.com/playlist?list=…"    # YouTube / YouTube Music, via yt-dlp
+```
+
+- **Spotify:** uses the developer app in `[spotify]` in config.toml. Spotify only shows playlist contents to logged-in users, so run `vibeseek spotify login` once. It opens your browser, and the login is remembered (`vibeseek spotify logout` forgets it). The app must have `http://127.0.0.1:8888/callback` as a Redirect URI.
+- **YouTube:** video titles like "Artist - Song (Official Video) [4K]" become artist "Artist", title "Song". For "Artist - Topic" auto-generated channels, the channel is the artist.
+- The link is fetched again on every run, so tracks added to the playlist later are picked up when you rerun it. Files go to `~/Music/downloads/<playlist name>/` unless you pass `-o`.
+
 
 ## Uploads
 
