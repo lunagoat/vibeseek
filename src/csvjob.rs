@@ -504,7 +504,13 @@ struct JobState {
 fn state_path(key: &str, stem: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    key.hash(&mut h);
+    // CSV progress files were always named from the path hashed *as a Path* (which hashes
+    // differently from a str); keep that so existing progress is found.
+    if key.starts_with('/') {
+        Path::new(key).hash(&mut h);
+    } else {
+        key.hash(&mut h);
+    }
     let stem: String = stem.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).take(60).collect();
     let dir = config::data_dir().join("csv");
     let _ = std::fs::create_dir_all(&dir);
