@@ -190,7 +190,25 @@ pub fn norm(s: &str) -> String {
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { ' ' })
         .collect();
-    mapped.split_whitespace().collect::<Vec<_>>().join(" ")
+    // Merge runs of single characters ("e b i t d a" from "E.B.I.T.D.A.") into one word, so
+    // acronyms match however a filename spells them.
+    let mut out: Vec<String> = vec![];
+    let mut run = String::new();
+    for w in mapped.split_whitespace() {
+        // Letters only: a single-digit track number must not glue onto "A Day in the Life".
+        if w.chars().count() == 1 && w.chars().all(char::is_alphabetic) {
+            run.push_str(w);
+            continue;
+        }
+        if !run.is_empty() {
+            out.push(std::mem::take(&mut run));
+        }
+        out.push(w.to_string());
+    }
+    if !run.is_empty() {
+        out.push(run);
+    }
+    out.join(" ")
 }
 
 /// Distinctive artist words ("the"/"and" match everything).
@@ -262,13 +280,18 @@ fn primary_artist(a: &str) -> String {
 
 /// Soulseek matches every word as a substring of the path; punctuation hurts, short noise words are fine.
 fn query_for(parts: &[&str]) -> String {
-    let joined = parts
-        .iter()
-        .filter(|p| !p.is_empty())
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ");
-    norm(&joined)
+    search_words(&parts.join(" ")).join(" ")
+}
+
+/// Words usable in a Soulseek query: peers split filenames on punctuation, so "E.B.I.T.D.A."
+/// is indexed as single letters, and slskd rejects queries without a 2+ character word.
+fn search_words(s: &str) -> Vec<String> {
+    s.to_lowercase()
+        .replace('&', " and ")
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() > 1)
+        .map(str::to_string)
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -706,12 +729,17 @@ impl Job {
             vec![query_for(&[&artist, &clean_title(&row.album)])]
         } else {
             let t = clean_title(&row.title);
-            let mut q = vec![query_for(&[&artist, &t])];
-            // Retry without the artist (matching still checks the path for it).
-            if !artist.is_empty() {
-                q.push(query_for(&[&t]));
+            if search_words(&t).is_empty() {
+                // e.g. "E.B.I.T.D.A.": find the album folder; matching still checks the title.
+                vec![query_for(&[&artist, &clean_title(&row.album)])]
+            } else {
+                let mut q = vec![query_for(&[&artist, &t])];
+                // Retry without the artist (matching still checks the path for it).
+                if !artist.is_empty() {
+                    q.push(query_for(&[&t]));
+                }
+                q
             }
-            q
         };
         for q in queries.iter().filter(|q| !q.is_empty()) {
             let responses = self.search(q).await?;
@@ -1240,6 +1268,16 @@ mod tests {
             primary_artist("The Dave Brubeck Quartet"),
             "The Dave Brubeck Quartet"
         );
+    }
+
+    #[test]
+    fn acronyms() {
+        assert_eq!(norm("E.B.I.T.D.A."), "ebitda");
+        assert_eq!(norm("01 - EBITDA.flac"), "01 ebitda flac");
+        assert_eq!(norm("I Am a Rock"), "i am a rock");
+        assert_eq!(norm("1. A Day in the Life.flac"), "1 a day in the life flac");
+        assert_eq!(query_for(&["Clipse", "E.B.I.T.D.A."]), "clipse");
+        assert!(search_words("P.O.V.").is_empty());
     }
 
     #[test]
