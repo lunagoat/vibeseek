@@ -32,6 +32,29 @@ pub async fn fetch(cfg: &Config, url: &str) -> Result<Playlist> {
     bail!("unsupported link (Spotify playlist/album/track or YouTube playlist/video): {url}")
 }
 
+/// A stable identity for a link, so re-copied share links (Spotify's `?si=…`, YouTube's `&t=…`)
+/// continue the same run instead of starting a new one.
+pub fn source_key(url: &str) -> String {
+    if let Some((kind, id)) = spotify_ref(url) {
+        return if kind == "liked" { "spotify:liked".into() } else { format!("spotify:{kind}:{id}") };
+    }
+    let param = |k: &str| {
+        let q = url.split_once('?')?.1;
+        q.split('&').find_map(|kv| kv.strip_prefix(&format!("{k}="))).map(|v| v.split('#').next().unwrap_or(v).to_string())
+    };
+    if let Some(list) = param("list") {
+        return format!("youtube:list:{list}");
+    }
+    if let Some(v) = param("v") {
+        return format!("youtube:video:{v}");
+    }
+    if let Some(i) = url.find("youtu.be/") {
+        let id: String = url[i + 9..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+        return format!("youtube:video:{id}");
+    }
+    url.to_string()
+}
+
 // ---------- Spotify ----------
 
 /// ("playlist" | "album" | "track", id) from open.spotify.com links or spotify: URIs.
@@ -413,6 +436,12 @@ mod tests {
         assert_eq!(spotify_ref("spotify:track:1YQWosTIljIvxAgHWTp7KP"), Some(("track", "1YQWosTIljIvxAgHWTp7KP".into())));
         assert_eq!(spotify_ref("https://www.youtube.com/playlist?list=x"), None);
         assert_eq!(spotify_ref("spotify-likes"), Some(("liked", String::new())));
+        assert_eq!(
+            source_key("https://open.spotify.com/playlist/2cLrAGb23tflHROup5aTqh?si=aaa"),
+            source_key("https://open.spotify.com/playlist/2cLrAGb23tflHROup5aTqh?si=bbb")
+        );
+        assert_eq!(source_key("https://www.youtube.com/watch?v=abc&list=PL1&index=3"), "youtube:list:PL1");
+        assert_eq!(source_key("https://youtu.be/SGK00Q7xx-s?t=10"), "youtube:video:SGK00Q7xx-s");
     }
 
     #[test]

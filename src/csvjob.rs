@@ -597,6 +597,33 @@ impl Limiter {
     }
 }
 
+/// Tag file marking which CSV / playlist owns a download folder.
+const OWNER_TAG: &str = ".vibeseek-source";
+
+/// `<root>/<name>`, unless a different input already owns that folder; then `<name> [id]`.
+fn pick_output_dir(root: &Path, name: &str, key: &str) -> PathBuf {
+    let base = root.join(name);
+    match std::fs::read_to_string(base.join(OWNER_TAG)) {
+        Ok(owner) if owner.trim() != key => {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h);
+            root.join(format!("{name} [{:06x}]", h.finish() & 0xff_ffff))
+        }
+        // Unowned (new, or made by something else, like sockseek) or already ours.
+        _ => base,
+    }
+}
+
+fn claim_output_dir(dir: &Path, key: &str) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let tag = dir.join(OWNER_TAG);
+    if !tag.exists() {
+        std::fs::write(tag, format!("{key}\n"))?;
+    }
+    Ok(())
+}
+
 /// A playlist name usable as a folder name.
 fn sanitize_name(name: &str) -> String {
     let s: String = name.chars().map(|c| if matches!(c, '/' | '\\' | '\0') { '_' } else { c }).collect();
@@ -1039,7 +1066,7 @@ pub async fn run(cfg: &Config, args: CsvArgs) -> Result<()> {
             rows.retain(|r| !r.album.is_empty() && seen.insert(r.key()));
         }
         let stem = sanitize_name(&pl.name);
-        (rows, args.file.clone(), stem, format!("{} ({})", pl.name, args.file))
+        (rows, crate::playlist::source_key(&args.file), stem, format!("{} ({})", pl.name, args.file))
     } else {
         let csv_path = config::expand(&args.file)
             .canonicalize()
@@ -1057,8 +1084,11 @@ pub async fn run(cfg: &Config, args: CsvArgs) -> Result<()> {
     let out_dir = match (&args.output, st.output.is_empty()) {
         (Some(o), _) => config::expand(o),
         (None, false) => PathBuf::from(&st.output),
-        (None, true) => cfg.downloads_dir().join(&stem),
+        (None, true) => pick_output_dir(&config::expand(&cfg.csv.output_root), &stem, &key),
     };
+    if !args.dry_run && !args.status {
+        claim_output_dir(&out_dir, &key)?;
+    }
     st.csv = key.clone();
     st.output = out_dir.display().to_string();
 

@@ -78,6 +78,8 @@ pub struct SearchConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CsvConfig {
+    /// Each CSV / playlist gets its own folder under here (unless -o is given).
+    pub output_root: String,
     /// Concurrent searches while processing a CSV.
     pub concurrency: usize,
     /// Soulseek throttles searching; stay below N searches per window.
@@ -161,6 +163,7 @@ impl Default for SearchConfig {
 impl Default for CsvConfig {
     fn default() -> Self {
         Self {
+            output_root: "~/Music/vibeseek".into(),
             concurrency: 2,
             searches_per_window: 34,
             window_secs: 220,
