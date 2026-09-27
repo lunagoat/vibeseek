@@ -52,7 +52,7 @@ In the TUI, press `/` to search and `Enter` to download. `v` toggles the files/f
 ## CSV and playlist batch mode
 
 ```
-vibeseek csv liked_songs.csv                  # → ~/Music/downloads/liked_songs/
+vibeseek csv liked_songs.csv                  # → ~/Music/vibeseek/liked_songs/
 vibeseek csv liked_songs.csv --dry-run -n 20  # see what it would pick
 vibeseek csv liked_songs.csv --status         # progress + list of what wasn't found
 vibeseek csv liked_songs.csv --retry --fallback lossy-ok
