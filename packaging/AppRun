@@ -1,0 +1,23 @@
+#!/bin/sh
+# vibeseek AppImage launcher.
+HERE="$(dirname "$(readlink -f "$0")")"
+BIN="$HERE/usr/bin/vibeseek"
+
+# Double-clicked in a file manager: no terminal attached, so open one and run inside it.
+if [ ! -t 0 ] && [ -z "$VIBESEEK_IN_TERMINAL" ] && [ $# -eq 0 ]; then
+    export VIBESEEK_IN_TERMINAL=1
+    SELF="${APPIMAGE:-$0}"
+    for t in "$TERMINAL" x-terminal-emulator kitty alacritty foot ghostty wezterm konsole gnome-terminal xfce4-terminal tilix xterm; do
+        [ -n "$t" ] && command -v "$t" >/dev/null 2>&1 || continue
+        case "$t" in
+            kitty|foot) exec "$t" "$SELF" ;;
+            wezterm) exec "$t" start -- "$SELF" ;;
+            gnome-terminal) exec "$t" -- "$SELF" ;;
+            *) exec "$t" -e "$SELF" ;;
+        esac
+    done
+    # No terminal found: tell the user how to run it.
+    command -v notify-send >/dev/null 2>&1 && notify-send "vibeseek" "Run this AppImage from a terminal: ./$(basename "$SELF")"
+    exit 1
+fi
+exec "$BIN" "$@"

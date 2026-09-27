@@ -17,6 +17,23 @@ vibeseek history --since 7d   # upload stats: top downloaders, most-downloaded f
 vibeseek csv ~/Desktop/liked_songs.csv -o ~/Music/liked --fallback lossy-ok
 ```
 
+
+## Installing on another computer (AppImage)
+
+Send your friend `dist/vibeseek-<version>-x86_64.AppImage`. It runs on any 64-bit Linux with glibc 2.28 or newer (Ubuntu 20.04+, Debian 10+, Fedora 29+, Arch, …) and systemd.
+
+1. Make it executable (`chmod +x vibeseek-*.AppImage`, or tick "allow executing" in the file manager), then double-click it or run it from a terminal. A double-click opens a terminal automatically.
+2. The first run starts `vibeseek setup`, which asks for:
+   - a Soulseek username and password (new names are registered on first login)
+   - folders to share
+   - where downloads go
+   - how peers reach them: UPnP (automatic), ProtonVPN port forwarding, or a port they forward themselves
+3. Setup then downloads slskd from its official GitHub release, writes the configs, copies vibeseek to `~/.local/bin/vibeseek`, starts the background services, and checks that the login and port work.
+
+After that they just run `vibeseek`. UPnP needs the `miniupnpc` package (setup says so if it's missing). `vibeseek setup --uninstall` removes everything setup installed, but keeps downloads.
+
+To build the AppImage: `./packaging/build-appimage.sh`. The first build downloads zig, cargo-zigbuild and appimagetool into `.tools/`.
+
 ## How it fits together
 
 ```

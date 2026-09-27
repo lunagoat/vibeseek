@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=vibeseek
+GenericName=Soulseek client
+Comment=Search, download and share on Soulseek from your terminal
+Exec=vibeseek
+Icon=vibeseek
+Terminal=true
+Categories=AudioVideo;Audio;Network;FileTransfer;
+Keywords=soulseek;slskd;music;p2p;flac;

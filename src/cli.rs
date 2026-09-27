@@ -17,7 +17,26 @@ use crate::{fmt, slskdcfg, Cli, Cmd, FilterArgs, TransferAction};
 
 pub async fn run(cli: Cli) -> Result<()> {
     let cfg = Config::load()?;
-    match cli.cmd.unwrap_or(Cmd::Tui) {
+    let cmd = cli.cmd.unwrap_or(Cmd::Tui);
+    // First run (e.g. a freshly downloaded AppImage): nothing to talk to yet.
+    let needs_slskd = !matches!(cmd, Cmd::Setup { .. } | Cmd::Config { .. } | Cmd::Spotify { .. });
+    if needs_slskd && !crate::setup::is_set_up(&cfg) {
+        if matches!(cmd, Cmd::Tui) && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            crate::setup::run(cfg).await?;
+            println!("\nPress Enter to open vibeseek…");
+            let _ = std::io::stdin().read_line(&mut String::new());
+            return crate::tui::run(Config::load()?).await;
+        }
+        bail!("vibeseek isn't set up on this computer yet — run `vibeseek setup`");
+    }
+    match cmd {
+        Cmd::Setup { uninstall } => {
+            if uninstall {
+                crate::setup::uninstall(&cfg)
+            } else {
+                crate::setup::run(cfg).await
+            }
+        }
         Cmd::Tui => crate::tui::run(cfg).await,
         Cmd::Search { query, filter, albums, limit, timeout, json, download, output } => {
             let mut cfg = cfg;

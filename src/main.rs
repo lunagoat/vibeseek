@@ -11,6 +11,7 @@ mod playlist;
 mod port;
 mod quality;
 mod search;
+mod setup;
 mod slskdcfg;
 mod tui;
 
@@ -179,6 +180,12 @@ pub enum Cmd {
         #[command(subcommand)]
         action: Option<AgentAction>,
     },
+    /// First-run setup: install slskd, log in to Soulseek, pick shares and folders
+    Setup {
+        /// Remove what setup installed (services, slskd, settings); keeps downloads
+        #[arg(long)]
+        uninstall: bool,
+    },
     /// Connection and share status
     Status,
     /// Rescan your shared folders (after adding or removing files)
@@ -282,6 +289,8 @@ pub struct CsvArgs {
 
 #[tokio::main]
 async fn main() {
+    // Pure-Rust TLS (no system OpenSSL), so the portable build runs on any distro.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
     if let Err(e) = cli::run(cli).await {
         eprintln!("\x1b[31merror:\x1b[0m {e:#}");

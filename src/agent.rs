@@ -14,7 +14,7 @@ use crate::AgentAction;
 pub async fn run(cfg: &Config, action: Option<AgentAction>) -> Result<()> {
     match action.unwrap_or(AgentAction::Run) {
         AgentAction::Run => run_loop(cfg).await,
-        AgentAction::Install => install(),
+        AgentAction::Install => install(cfg),
         AgentAction::Uninstall => {
             let _ = daemon::systemctl(&["disable", "--now", AGENT_UNIT]);
             let path = unit_path();
@@ -32,24 +32,28 @@ fn unit_path() -> std::path::PathBuf {
     crate::config::home().join(".config/systemd/user").join(AGENT_UNIT)
 }
 
-fn install() -> Result<()> {
-    let exe = std::env::current_exe()?.canonicalize()?;
-    let unit = format!(
+/// The agent's systemd unit, running `exe agent run` alongside `slskd_unit`.
+pub fn unit_text(exe: &std::path::Path, slskd_unit: &str) -> String {
+    format!(
         "[Unit]\n\
          Description=vibeseek agent (port sync, upload history, download mover)\n\
-         After=slskd.service\n\
-         Wants=slskd.service\n\n\
+         After={slskd_unit}\n\
+         Wants={slskd_unit}\n\n\
          [Service]\n\
-         ExecStart={} agent run\n\
+         ExecStart=\"{}\" agent run\n\
          Restart=always\n\
          RestartSec=15\n\n\
          [Install]\n\
          WantedBy=default.target\n",
         exe.display()
-    );
+    )
+}
+
+fn install(cfg: &Config) -> Result<()> {
+    let exe = crate::setup::stable_exe()?;
     let path = unit_path();
     std::fs::create_dir_all(path.parent().unwrap())?;
-    std::fs::write(&path, unit)?;
+    std::fs::write(&path, unit_text(&exe, &cfg.slskd.service))?;
     daemon::systemctl(&["daemon-reload"])?;
     daemon::systemctl(&["enable", "--now", AGENT_UNIT])?;
     println!("agent installed and running ({})", crate::config::tilde(&path));
