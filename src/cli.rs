@@ -793,7 +793,20 @@ async fn cmd_status(cfg: &Config) -> Result<()> {
     println!("slskd service:  {}", if running { "\x1b[32mrunning\x1b[0m" } else { "\x1b[31mstopped\x1b[0m" });
     println!("vibeseek agent: {}", if agent { "\x1b[32mrunning\x1b[0m" } else { "\x1b[33mnot running\x1b[0m (vibeseek agent install)" });
     if let Ok(p) = slskdcfg::listen_port(&cfg.slskd_yml()) {
-        println!("listen port:    {p}");
+        let health = crate::port::load_health().filter(|h| h.port == p);
+        let note = match health {
+            Some(h) => {
+                let ago = (chrono::Utc::now() - h.checked_at).num_minutes();
+                let since = h.since.with_timezone(&chrono::Local).format("%b %d %H:%M");
+                if h.open {
+                    format!("  \x1b[32mreachable\x1b[0m (checked {ago} min ago, {})", h.route)
+                } else {
+                    format!("  \x1b[31mNOT reachable since {since}\x1b[0m ({}) — peers can't connect; check the VPN", h.route)
+                }
+            }
+            None => "  (not tested yet — `vibeseek port --check`)".into(),
+        };
+        println!("listen port:    {p}{note}");
     }
     let client = Client::new(cfg)?;
     match client.application().await {

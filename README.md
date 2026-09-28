@@ -124,6 +124,7 @@ Whenever the route or port changes, the agent writes the port into slskd.yml (sl
 
 - `vibeseek port --show` shows the active route and whether it's applied
 - `vibeseek port` syncs right now, and `vibeseek port 40649` sets a port by hand (the agent re-syncs later)
+- Every 30 minutes (`port.check_minutes`), and a minute after any route change, the agent runs Soulseek's port test. If you've become unreachable, it re-syncs the port, reconnects slskd, and sends a desktop notification (`port.notify`). It notifies you again when you're reachable. `vibeseek status` shows the last result. If the VPN stops forwarding a port for more than 10 minutes, you get a notification telling you to reconnect it, because nothing else fixes that.
 - The settings are `[port]` in config.toml: `vpn_interface = "proton0"`, `upnp = true`, `upnp_port = 50300`, `auto = true`
 
 ## Messages

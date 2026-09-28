@@ -64,7 +64,13 @@ async fn run_loop(cfg: &Config) -> Result<()> {
     let history = History::open().context("opening history db")?;
     let mut last_port_check = Instant::now() - Duration::from_secs(3600);
     let mut last_port_err = String::new();
+    let mut last_port_err_logged = Instant::now();
+    let mut port_err_since: Option<Instant> = None;
+    let mut warned_no_vpn_port = false;
     let mut port_state = PortState::default();
+    // First reachability test a minute after start, then every `check_minutes`.
+    let check_every = Duration::from_secs(cfg.port.check_minutes.max(1) * 60);
+    let mut next_health = Instant::now() + Duration::from_secs(60);
     eprintln!("vibeseek agent running");
     loop {
         // Rebuilt each cycle so a changed API key in slskd.yml is picked up without a restart.
@@ -93,7 +99,11 @@ async fn run_loop(cfg: &Config) -> Result<()> {
             port_state = st;
             match res {
                 Ok(step) => {
+                    if port_err_since.take().is_some() && !last_port_err.is_empty() {
+                        eprintln!("port sync working again");
+                    }
                     last_port_err.clear();
+                    warned_no_vpn_port = false;
                     if let Some(note) = &step.note {
                         eprintln!("{note}");
                     }
@@ -112,14 +122,46 @@ async fn run_loop(cfg: &Config) -> Result<()> {
                             Ok(()) => eprintln!("reconnected slskd to Soulseek"),
                             Err(e) => eprintln!("reconnect failed: {e:#}"),
                         }
+                        // Verify the new route actually works once things settle.
+                        next_health = next_health.min(Instant::now() + Duration::from_secs(60));
                     }
                 }
                 Err(e) => {
                     let msg = e.to_string();
-                    if msg != last_port_err {
-                        eprintln!("port sync: {msg}");
-                        last_port_err = msg;
+                    let since = *port_err_since.get_or_insert_with(Instant::now);
+                    // Log each new error, and repeat it hourly so a long outage is visible.
+                    if msg != last_port_err || last_port_err_logged.elapsed() > Duration::from_secs(3600) {
+                        let mins = since.elapsed().as_secs() / 60;
+                        if msg == last_port_err {
+                            eprintln!("port sync still failing ({mins} min): {msg}");
+                        } else {
+                            eprintln!("port sync: {msg}");
+                        }
+                        last_port_err = msg.clone();
+                        last_port_err_logged = Instant::now();
                     }
+                    // VPN up but no forwarded port: slskd keeps advertising a dead port and
+                    // nobody can reach you. Only reconnecting the VPN fixes that.
+                    if msg.contains("didn't return a forwarded port")
+                        && since.elapsed() > Duration::from_secs(600)
+                        && !warned_no_vpn_port
+                    {
+                        warned_no_vpn_port = true;
+                        if cfg.port.notify {
+                            port::notify(
+                                "Soulseek: VPN isn't forwarding a port",
+                                "Nobody can connect to you, so uploads stop. Reconnect ProtonVPN (with port forwarding on).",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if cfg.port.check_minutes > 0 && Instant::now() >= next_health {
+            next_health = Instant::now() + check_every;
+            if let Some(retry_soon) = check_reachability(cfg, &client, &port_state).await {
+                if retry_soon {
+                    next_health = Instant::now() + Duration::from_secs(120);
                 }
             }
         }
@@ -140,4 +182,53 @@ async fn run_loop(cfg: &Config) -> Result<()> {
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
+}
+
+/// Test the listen port with Soulseek's port tester and record the result. On a change,
+/// log it and notify; when unreachable, re-sync the port and reconnect slskd.
+/// Returns Some(true) when a quick re-check is wanted, None if the test couldn't run.
+async fn check_reachability(cfg: &Config, client: &Client, st: &PortState) -> Option<bool> {
+    // Only meaningful while logged in.
+    if !client.application().await.ok()?.server.is_logged_in {
+        return None;
+    }
+    let port = crate::slskdcfg::listen_port(&cfg.slskd_yml()).ok()?;
+    let test = match port::test(port).await {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("port test couldn't run: {e:#}");
+            return None;
+        }
+    };
+    let route = st.route.map(|r| r.describe()).unwrap_or("manual port").to_string();
+    let now = chrono::Utc::now();
+    let prev = port::load_health();
+    let changed = prev.as_ref().map(|p| p.open != test.open || p.port != port).unwrap_or(true);
+    let since = match &prev {
+        Some(p) if !changed => p.since,
+        _ => now,
+    };
+    port::save_health(&port::Health { checked_at: now, port, route: route.clone(), open: test.open, message: test.message.clone(), since });
+
+    if test.open {
+        if changed {
+            eprintln!("port {port} reachable ({route})");
+            if prev.map(|p| !p.open).unwrap_or(false) && cfg.port.notify {
+                port::notify("Soulseek: reachable again", &format!("Port {port} is open ({route})."));
+            }
+        }
+        return Some(false);
+    }
+    eprintln!("port {port} NOT reachable ({route}): {}", test.message);
+    if changed && cfg.port.notify {
+        port::notify(
+            "Soulseek: you're unreachable",
+            &format!("Port {port} is closed ({route}). Peers can't connect, so uploads stop. vibeseek is trying to fix it; if you're on the VPN, reconnect it."),
+        );
+    }
+    // Remedy attempt: re-request the port mapping and re-announce to the server.
+    let c = cfg.clone();
+    let _ = tokio::task::spawn_blocking(move || port::step(&c, &mut PortState::default())).await;
+    let _ = client.reconnect().await;
+    Some(true)
 }

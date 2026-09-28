@@ -198,3 +198,34 @@ pub async fn test(port: u16) -> Result<PortTest> {
     let open = message.contains("tcp open");
     Ok(PortTest { open, message })
 }
+
+/// Result of the agent's last reachability check (shown by `vibeseek status`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Health {
+    pub checked_at: chrono::DateTime<chrono::Utc>,
+    pub port: u16,
+    pub route: String,
+    pub open: bool,
+    pub message: String,
+    /// When the current open/closed state began.
+    pub since: chrono::DateTime<chrono::Utc>,
+}
+
+fn health_path() -> std::path::PathBuf {
+    crate::config::data_dir().join("port_health.json")
+}
+
+pub fn load_health() -> Option<Health> {
+    std::fs::read(health_path()).ok().and_then(|d| serde_json::from_slice(&d).ok())
+}
+
+pub fn save_health(h: &Health) {
+    if let Ok(d) = serde_json::to_vec_pretty(h) {
+        let _ = std::fs::write(health_path(), d);
+    }
+}
+
+/// Desktop notification (best effort; needs a notification daemon like dunst).
+pub fn notify(title: &str, body: &str) {
+    let _ = Command::new("notify-send").args(["-a", "vibeseek", title, body]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}

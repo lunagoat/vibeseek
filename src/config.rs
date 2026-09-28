@@ -46,6 +46,10 @@ pub struct PortConfig {
     /// When the VPN is down, open a port on the home router via UPnP (like Nicotine+).
     pub upnp: bool,
     pub upnp_port: u16,
+    /// Test reachability with Soulseek's port tester every N minutes (0 = never).
+    pub check_minutes: u64,
+    /// Desktop notification when you become unreachable / reachable again.
+    pub notify: bool,
 }
 
 /// A Spotify developer app (https://developer.spotify.com/dashboard), for playlist links.
@@ -146,7 +150,7 @@ impl Default for SlskdConfig {
 
 impl Default for PortConfig {
     fn default() -> Self {
-        Self { auto: true, gateway: "10.2.0.1".into(), vpn_interface: "proton0".into(), upnp: true, upnp_port: 50300 }
+        Self { auto: true, gateway: "10.2.0.1".into(), vpn_interface: "proton0".into(), upnp: true, upnp_port: 50300, check_minutes: 30, notify: true }
     }
 }
 
