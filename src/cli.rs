@@ -93,6 +93,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Cmd::Daemon { action } => crate::daemon::run(&cfg, action),
         Cmd::Agent { action } => crate::agent::run(&cfg, action).await,
         Cmd::Status => cmd_status(&cfg).await,
+        Cmd::Shares { action } => cmd_shares(&cfg, action).await,
         Cmd::Rescan => {
             Client::new(&cfg)?.rescan_shares().await?;
             println!("share rescan started — `vibeseek status` shows progress");
@@ -784,6 +785,102 @@ async fn cmd_messages(cfg: &Config, user: Option<&str>, close: bool) -> Result<(
     }
     println!("{t}");
     println!("\n\x1b[2mread one: vibeseek messages <user>   reply: vibeseek msg <user> <text>\x1b[0m");
+    Ok(())
+}
+
+async fn cmd_shares(cfg: &Config, action: Option<crate::ShareAction>) -> Result<()> {
+    let yml = cfg.slskd_yml();
+    let current = slskdcfg::shares(&yml)?;
+    let Some(action) = action else {
+        if current.is_empty() {
+            println!("you're not sharing anything — add folders with `vibeseek shares add <folder>`");
+        }
+        for (i, d) in current.iter().enumerate() {
+            let missing = if std::path::Path::new(d).is_dir() { "" } else { "  \x1b[33m(not found — drive unplugged?)\x1b[0m" };
+            println!("{:>2}. {}{missing}", i + 1, config::tilde(std::path::Path::new(d)));
+        }
+        if let Ok(app) = Client::new(cfg)?.application().await {
+            let sh = app.shares;
+            let scan = if sh.scanning { format!(", scanning {:.0}%", sh.scan_progress * 100.0) } else { String::new() };
+            println!("\n\x1b[2m{} files in {} folders shared{scan}\x1b[0m", sh.files, sh.directories);
+        }
+        return Ok(());
+    };
+    let mut changed = false;
+    match action {
+        crate::ShareAction::Add { folders } => {
+            let downloads = cfg.downloads_dir();
+            for f in folders {
+                let path = config::expand(&f);
+                let Ok(path) = path.canonicalize() else {
+                    println!("\x1b[31m✗\x1b[0m {f}: not found");
+                    continue;
+                };
+                if !path.is_dir() {
+                    println!("\x1b[31m✗\x1b[0m {}: not a folder", config::tilde(&path));
+                    continue;
+                }
+                // Overlapping shares make slskd list files twice.
+                if let Some(parent) = current.iter().find(|c| path.starts_with(c.as_str()) && path.as_path() != std::path::Path::new(c.as_str())) {
+                    println!("\x1b[33m•\x1b[0m {}: already shared as part of {}", config::tilde(&path), config::tilde(std::path::Path::new(parent)));
+                    continue;
+                }
+                if path.starts_with(&downloads) || downloads.starts_with(&path) {
+                    println!("\x1b[33mnote:\x1b[0m {} overlaps your downloads folder; unfinished/staged downloads would be shared too", config::tilde(&path));
+                }
+                let dir = path.to_string_lossy().to_string();
+                if slskdcfg::add_share(&yml, &dir)? {
+                    println!("\x1b[32m+\x1b[0m {}", config::tilde(&path));
+                    changed = true;
+                } else {
+                    println!("  {} is already shared", config::tilde(&path));
+                }
+            }
+        }
+        crate::ShareAction::Remove { folders } => {
+            for f in folders {
+                // A number from the listing, or a path.
+                let dir = match f.parse::<usize>() {
+                    Ok(n) if n >= 1 && n <= current.len() => current[n - 1].clone(),
+                    _ => {
+                        let p = config::expand(&f);
+                        let p = p.canonicalize().unwrap_or(p);
+                        p.to_string_lossy().to_string()
+                    }
+                };
+                if slskdcfg::remove_share(&yml, &dir)? {
+                    println!("\x1b[31m-\x1b[0m {}", config::tilde(std::path::Path::new(&dir)));
+                    changed = true;
+                } else {
+                    println!("  {} wasn't shared (see `vibeseek shares`)", config::tilde(std::path::Path::new(&dir)));
+                }
+            }
+        }
+    }
+    if changed {
+        // slskd ignores a rescan request while a scan is running, so wait for any current
+        // scan to finish; otherwise the change wouldn't be picked up.
+        let client = Client::new(cfg)?;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await; // config reload
+        let mut waited = false;
+        for i in 0..300 {
+            match client.application().await {
+                Ok(app) if app.shares.scanning => {
+                    if !waited {
+                        println!("waiting for the scan already in progress to finish…");
+                        waited = true;
+                    }
+                    if i % 15 == 14 {
+                        println!("  {:.0}%", app.shares.scan_progress * 100.0);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                _ => break,
+            }
+        }
+        client.rescan_shares().await?;
+        println!("rescanning shares — `vibeseek shares` shows progress");
+    }
     Ok(())
 }
 

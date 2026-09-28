@@ -111,3 +111,44 @@ pub fn unban(path: &Path, user: &str) -> Result<bool> {
     }
     Ok(changed)
 }
+
+fn shares_mut(v: &mut Value) -> Result<&mut Vec<Value>> {
+    let m = get_mut(v, &["shares", "directories"])?;
+    if !m.is_sequence() {
+        *m = Value::Sequence(vec![]);
+    }
+    Ok(m.as_sequence_mut().unwrap())
+}
+
+pub fn shares(path: &Path) -> Result<Vec<String>> {
+    let v = load(path)?;
+    Ok(get(&v, &["shares", "directories"])
+        .and_then(|m| m.as_sequence())
+        .map(|s| s.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default())
+}
+
+/// Returns false if the folder was already shared.
+pub fn add_share(path: &Path, dir: &str) -> Result<bool> {
+    let mut v = load(path)?;
+    let list = shares_mut(&mut v)?;
+    if list.iter().any(|m| m.as_str() == Some(dir)) {
+        return Ok(false);
+    }
+    list.push(Value::String(dir.to_string()));
+    save(path, &v)?;
+    Ok(true)
+}
+
+/// Returns false if the folder wasn't shared.
+pub fn remove_share(path: &Path, dir: &str) -> Result<bool> {
+    let mut v = load(path)?;
+    let list = shares_mut(&mut v)?;
+    let before = list.len();
+    list.retain(|m| m.as_str() != Some(dir));
+    let changed = list.len() != before;
+    if changed {
+        save(path, &v)?;
+    }
+    Ok(changed)
+}

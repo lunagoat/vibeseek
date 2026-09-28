@@ -190,6 +190,11 @@ pub enum Cmd {
     Status,
     /// Rescan your shared folders (after adding or removing files)
     Rescan,
+    /// List, add or remove shared folders
+    Shares {
+        #[command(subcommand)]
+        action: Option<ShareAction>,
+    },
     /// Show config file location (or open it in $EDITOR with --edit)
     Config {
         #[arg(long)]
@@ -210,6 +215,20 @@ pub enum TransferAction {
     Retry {
         /// Numbers from the last listing, or omit for all failed
         which: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum ShareAction {
+    /// Share one or more folders
+    Add {
+        #[arg(required = true, num_args = 1..)]
+        folders: Vec<String>,
+    },
+    /// Stop sharing folders (by path, or by number from `vibeseek shares`)
+    Remove {
+        #[arg(required = true, num_args = 1..)]
+        folders: Vec<String>,
     },
 }
 

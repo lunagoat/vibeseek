@@ -127,6 +127,17 @@ Whenever the route or port changes, the agent writes the port into slskd.yml (sl
 - Every 30 minutes (`port.check_minutes`), and a minute after any route change, the agent runs Soulseek's port test. If you've become unreachable, it re-syncs the port, reconnects slskd, and sends a desktop notification (`port.notify`). It notifies you again when you're reachable. `vibeseek status` shows the last result. If the VPN stops forwarding a port for more than 10 minutes, you get a notification telling you to reconnect it, because nothing else fixes that.
 - The settings are `[port]` in config.toml: `vpn_interface = "proton0"`, `upnp = true`, `upnp_port = 50300`, `auto = true`
 
+## Sharing
+
+```
+vibeseek shares                          # list shared folders + how many files are shared
+vibeseek shares add ~/Music "/mnt/music/Vinyl rips"
+vibeseek shares remove 3                 # by number from the list, or by path
+vibeseek rescan                          # after adding/removing files inside shared folders
+```
+
+Adding or removing a folder updates slskd's config and rescans. If a scan is already running, it waits for that to finish first, since slskd ignores rescan requests mid-scan. Folders that are already inside a shared folder are skipped, and you get a warning if a folder overlaps your downloads.
+
 ## Messages
 
 Tab **5** in the TUI shows your private messages. Conversations with unread messages are listed first, and the top bar shows `✉ N` for unread messages on every tab.
