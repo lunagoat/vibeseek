@@ -188,24 +188,8 @@ fn write_slskd_yml(path: &Path, a: &Answers) -> Result<()> {
                 ("groups", yaml_map(vec![("blacklisted", yaml_map(vec![("members", Value::Sequence(vec![]))]))])),
             ]),
         ),
-        (
-            "retention",
-            yaml_map(vec![
-                ("search", Value::Number(60.into())),
-                (
-                    "transfers",
-                    yaml_map(vec![(
-                        "upload",
-                        yaml_map(vec![
-                            ("succeeded", Value::Number(10080.into())),
-                            ("errored", Value::Number(1440.into())),
-                            ("cancelled", Value::Number(60.into())),
-                            ("failed", Value::Number(1440.into())),
-                        ]),
-                    )]),
-                ),
-            ]),
-        ),
+        // Clean up vibeseek's own searches; finished transfers are kept (slskd's default).
+        ("retention", yaml_map(vec![("search", Value::Number(60.into()))])),
         (
             "web",
             yaml_map(vec![

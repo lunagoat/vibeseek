@@ -157,7 +157,8 @@ pub async fn run(cfg: Config) -> Result<()> {
         uploads: vec![],
         dl_view: vec![],
         ul_view: vec![],
-        hide_old: true,
+        // Show finished transfers by default; `h` hides ones older than 10 minutes.
+        hide_old: false,
         responses: vec![],
         hits: vec![],
         folders: vec![],
@@ -551,11 +552,14 @@ impl App {
     }
 
     fn clear_finished(&mut self) {
+        if self.tab == Tab::Uploads {
+            self.say("uploads are kept as history — press h to hide old finished ones");
+            return;
+        }
         let c = self.client.clone();
-        let up = self.tab == Tab::Uploads;
         self.spawn_simple(async move {
-            if up { c.clear_completed_uploads().await? } else { c.clear_completed_downloads().await? }
-            Ok("cleared finished transfers".into())
+            c.clear_completed_downloads().await?;
+            Ok("cleared finished downloads".into())
         });
     }
 

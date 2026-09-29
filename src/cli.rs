@@ -489,12 +489,11 @@ async fn transfer_action(cfg: &Config, client: &Client, uploads: bool, action: T
     match action {
         TransferAction::Clear => {
             if uploads {
-                client.clear_completed_uploads().await?;
-                let _ = History::open().and_then(|h| h.record(&current));
-            } else {
-                client.clear_completed_downloads().await?;
+                println!("uploads are kept as your history and aren't cleared (`vibeseek uploads` shows only recent ones; --all shows everything)");
+                return Ok(());
             }
-            println!("cleared finished transfers");
+            client.clear_completed_downloads().await?;
+            println!("cleared finished downloads");
         }
         TransferAction::Cancel { which } => {
             let targets = select_transfers(&current, uploads, &which, |t| !t.is_finished())?;

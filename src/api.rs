@@ -381,7 +381,9 @@ impl Client {
     }
 
     pub async fn uploads(&self) -> Result<Vec<Transfer>> {
-        let users: Vec<UserTransfers> = self.req(Method::GET, "/transfers/uploads", None).await?;
+        // Include uploads that were "cleared" (slskd only flags them removed): the uploads list
+        // is your history, and it shouldn't shrink.
+        let users: Vec<UserTransfers> = self.req(Method::GET, "/transfers/uploads?includeRemoved=true", None).await?;
         Ok(flatten(users))
     }
 
@@ -438,9 +440,6 @@ impl Client {
         self.raw(Method::DELETE, "/transfers/downloads/all/completed", None).await.map(|_| ())
     }
 
-    pub async fn clear_completed_uploads(&self) -> Result<()> {
-        self.raw(Method::DELETE, "/transfers/uploads/all/completed", None).await.map(|_| ())
-    }
 
     /// List the files in one remote folder. Returned filenames are full remote paths.
     pub async fn browse_dir(&self, username: &str, dir: &str) -> Result<Vec<SearchFile>> {
