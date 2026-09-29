@@ -420,9 +420,12 @@ fn summary(list: &[Transfer], uploads: bool) -> String {
 async fn fetch(client: &Client, uploads: bool, all: bool) -> Result<Vec<Transfer>> {
     let mut list = if uploads { client.uploads().await? } else { client.downloads().await? };
     if !all {
-        // Keep active/queued, plus things that finished in the last 10 minutes.
+        // Keep active/queued, plus things that finished in the last 10 minutes and weren't cleared.
         let cutoff = chrono::Utc::now() - chrono::Duration::minutes(10);
-        list.retain(|t| !t.is_finished() || t.ended_at.map(|e| e > cutoff).unwrap_or(false));
+        let mark = crate::clears::load().mark(uploads);
+        list.retain(|t| {
+            !crate::clears::is_cleared(t, mark) && (!t.is_finished() || t.ended_at.map(|e| e > cutoff).unwrap_or(false))
+        });
     }
     // Active first, then queued, then finished.
     list.sort_by_key(|t| (if t.is_active() { 0 } else if !t.is_finished() { 1 } else { 2 }, std::cmp::Reverse(t.requested_at)));
@@ -488,12 +491,14 @@ async fn transfer_action(cfg: &Config, client: &Client, uploads: bool, action: T
     let current = if uploads { client.uploads().await? } else { client.downloads().await? };
     match action {
         TransferAction::Clear => {
+            let n = current.iter().filter(|t| t.is_finished() && !crate::clears::is_cleared(t, crate::clears::load().mark(uploads))).count();
+            crate::clears::clear_now(uploads)?;
             if uploads {
-                println!("uploads are kept as your history and aren't cleared (`vibeseek uploads` shows only recent ones; --all shows everything)");
-                return Ok(());
+                println!("cleared {n} finished uploads from the list (they stay in `vibeseek history` and `vibeseek uploads --all`)");
+            } else {
+                client.clear_completed_downloads().await?;
+                println!("cleared {n} finished downloads");
             }
-            client.clear_completed_downloads().await?;
-            println!("cleared finished downloads");
         }
         TransferAction::Cancel { which } => {
             let targets = select_transfers(&current, uploads, &which, |t| !t.is_finished())?;

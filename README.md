@@ -111,6 +111,8 @@ vibeseek playlist "https://www.youtube.com/playlist?list=…"    # YouTube / You
 
 `vibeseek uploads` shows active and queued uploads (`-w` for a live view, `--all` for finished ones too). `vibeseek uploads cancel 2`, `… cancel user:NAME`, `vibeseek ban NAME`, and `vibeseek uploads clear` manage them.
 
+To tidy the lists, press `x` in the Uploads or Downloads tab (or run `vibeseek uploads clear` / `vibeseek downloads clear`). It asks first, and only hides transfers that have finished; active and queued ones stay. Cleared uploads remain in your history and in `vibeseek uploads --all`. Otherwise the lists keep everything: nothing is cleared automatically.
+
 slskd forgets finished transfers after a while, so the agent (and the TUI while it's open) records every finished upload into `history.db`. `vibeseek history` shows totals, top downloaders, most-downloaded files, and recent uploads. `-u NAME` shows one person's uploads.
 
 ## Staying reachable (VPN port / router port)

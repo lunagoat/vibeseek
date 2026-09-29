@@ -44,6 +44,8 @@ pub enum Mode {
     /// Output folder prompt (its own buffer so the search text survives).
     OutputPrompt(String),
     ConfirmBan(String),
+    /// "Clear N finished uploads/downloads?" (uploads?, count)
+    ConfirmClear(bool, usize),
     UserDetail(String, Vec<history::Row>),
     /// Typing a private message to the open conversation.
     Compose(String),
@@ -102,6 +104,8 @@ pub struct App {
     pub dl_view: Vec<Transfer>,
     pub ul_view: Vec<Transfer>,
     pub hide_old: bool,
+    /// When finished transfers were last cleared from each list (`x`).
+    clears: crate::clears::Clears,
     // search
     responses: Vec<SearchResponse>,
     pub hits: Vec<Hit>,
@@ -159,6 +163,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         ul_view: vec![],
         // Show finished transfers by default; `h` hides ones older than 10 minutes.
         hide_old: false,
+        clears: crate::clears::load(),
         responses: vec![],
         hits: vec![],
         folders: vec![],
@@ -279,8 +284,12 @@ fn is_old(t: &Transfer) -> bool {
 }
 
 /// Active first, then queued, then finished; newest first within each group.
-fn sorted_view(list: &[Transfer], hide_old: bool) -> Vec<Transfer> {
-    let mut v: Vec<Transfer> = list.iter().filter(|t| !(hide_old && is_old(t))).cloned().collect();
+fn sorted_view(list: &[Transfer], hide_old: bool, cleared: Option<chrono::DateTime<Utc>>) -> Vec<Transfer> {
+    let mut v: Vec<Transfer> = list
+        .iter()
+        .filter(|t| !(hide_old && is_old(t)) && !crate::clears::is_cleared(t, cleared))
+        .cloned()
+        .collect();
     v.sort_by_key(|t| (if t.is_active() { 0 } else if !t.is_finished() { 1 } else { 2 }, std::cmp::Reverse(t.requested_at)));
     v
 }
@@ -371,10 +380,10 @@ impl App {
     }
 
     fn rebuild_views(&mut self) {
-        let dl = sorted_view(&self.downloads, self.hide_old);
+        let dl = sorted_view(&self.downloads, self.hide_old, self.clears.downloads);
         keep_selection(&self.dl_view, &dl, &mut self.tables[1]);
         self.dl_view = dl;
-        let ul = sorted_view(&self.uploads, self.hide_old);
+        let ul = sorted_view(&self.uploads, self.hide_old, self.clears.uploads);
         keep_selection(&self.ul_view, &ul, &mut self.tables[2]);
         self.ul_view = ul;
     }
@@ -551,16 +560,33 @@ impl App {
         });
     }
 
+    /// `x`: ask before clearing finished transfers from the current list.
     fn clear_finished(&mut self) {
-        if self.tab == Tab::Uploads {
-            self.say("uploads are kept as history — press h to hide old finished ones");
+        let up = self.tab == Tab::Uploads;
+        let n = if up { &self.ul_view } else { &self.dl_view }.iter().filter(|t| t.is_finished()).count();
+        if n == 0 {
+            self.say("nothing finished to clear");
             return;
         }
-        let c = self.client.clone();
-        self.spawn_simple(async move {
-            c.clear_completed_downloads().await?;
-            Ok("cleared finished downloads".into())
-        });
+        self.mode = Mode::ConfirmClear(up, n);
+    }
+
+    fn do_clear(&mut self, uploads: bool) {
+        match crate::clears::clear_now(uploads) {
+            Ok(c) => self.clears = c,
+            Err(e) => return self.err(format!("couldn't save: {e}")),
+        }
+        self.rebuild_views();
+        if uploads {
+            self.say("cleared finished uploads (they stay in your history — tab 4)");
+        } else {
+            // Downloads are also cleared in slskd itself.
+            let c = self.client.clone();
+            self.spawn_simple(async move {
+                c.clear_completed_downloads().await?;
+                Ok("cleared finished downloads".into())
+            });
+        }
     }
 
     fn retry_selected(&mut self) {
@@ -729,6 +755,14 @@ impl App {
                     }
                     KeyCode::Char(c) => buf.push(c),
                     _ => {}
+                }
+                return false;
+            }
+            Mode::ConfirmClear(uploads, _) => {
+                let uploads = *uploads;
+                self.mode = Mode::Normal;
+                if matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+                    self.do_clear(uploads);
                 }
                 return false;
             }

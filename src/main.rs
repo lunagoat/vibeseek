@@ -1,5 +1,6 @@
 mod agent;
 mod api;
+mod clears;
 mod cli;
 mod config;
 mod csvjob;

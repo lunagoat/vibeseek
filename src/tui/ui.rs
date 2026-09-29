@@ -104,7 +104,7 @@ fn render_bottom(f: &mut Frame, a: &App, r: Rect) {
         (Mode::OutputPrompt(_), _) => "Enter set folder (empty = default)  Esc cancel",
         (_, Tab::Search) => "/ search  Enter download  a whole folder  f filter  t file types  v files/folders  s sort  o output folder  ? help",
         (_, Tab::Downloads) => "c cancel  R retry failed  x clear finished  h show/hide old  ? help",
-        (_, Tab::Uploads) => "Enter user details  b ban  c cancel  h hide/show old finished  ? help",
+        (_, Tab::Uploads) => "Enter user details  b ban  c cancel  x clear finished  h hide/show old  ? help",
         (Mode::Compose(_), _) => "Enter send  Esc cancel  Ctrl-U clear",
         (Mode::TypesPrompt(_), _) => "Enter apply (empty = preset's types)  Esc cancel  Ctrl-U clear",
         (Mode::NewConversation(_), _) => "type a username, Enter to start writing  Esc cancel",
@@ -553,7 +553,7 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
                 ("", ""),
                 ("Downloads / Uploads", ""),
                 ("c", "cancel selected"),
-                ("x", "clear finished downloads (uploads are kept)"),
+                ("x", "clear finished from the list (asks first; uploads stay in history)"),
                 ("h", "show / hide finished transfers older than 10 min"),
                 ("R", "retry failed download"),
                 ("Enter (uploads)", "user details + their history"),
@@ -592,6 +592,22 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
             ];
             f.render_widget(Paragraph::new(text).block(block("Output folder")), r);
             f.set_cursor_position((r.x + 1 + buf.width() as u16, r.y + 3));
+        }
+        Mode::ConfirmClear(uploads, n) => {
+            let what = if *uploads { "uploads" } else { "downloads" };
+            let r = centered(area, 78, 6);
+            f.render_widget(Clear, r);
+            let note = if *uploads {
+                "They stay in your upload history (tab 4) and `vibeseek uploads --all`."
+            } else {
+                "Files you downloaded are not touched."
+            };
+            let text = vec![
+                Line::from(vec![Span::raw(format!("Clear {n} finished {what} from this list?"))]),
+                Line::from(Span::styled(note, dim())),
+                Line::from(Span::styled("Active and queued transfers stay.   y / n", dim())),
+            ];
+            f.render_widget(Paragraph::new(text).block(block(format!("Clear {what}"))), r);
         }
         Mode::ConfirmBan(user) => {
             let r = centered(area, 56, 5);
