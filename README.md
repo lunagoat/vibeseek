@@ -2,7 +2,7 @@
 
 Soulseek from the terminal. A CLI + TUI frontend for [slskd](https://github.com/slskd/slskd).
 
-- **Search** the network, with quality filters (lossless-first by default, like your sockseek config)
+- **Search** the network, with quality filters (lossless-first by default)
 - **Download** single files or whole folders into any folder you choose
 - **CSV / playlist batch mode**: CSVs, Spotify playlists/albums/liked songs, YouTube playlists; resumable, with automatic retry from other sources
 - **Upload monitoring**: who's downloading from you, live progress and speed, permanent history and stats, cancel and ban
@@ -18,21 +18,41 @@ vibeseek csv ~/Desktop/liked_songs.csv -o ~/Music/liked --fallback lossy-ok
 ```
 
 
-## Installing on another computer (AppImage)
+## Installing
 
-Send your friend `dist/vibeseek-<version>-x86_64.AppImage`. It runs on any 64-bit Linux with glibc 2.28 or newer (Ubuntu 20.04+, Debian 10+, Fedora 29+, Arch, …) and systemd.
+vibeseek runs on 64-bit Linux with systemd. You don't need to install slskd yourself: setup downloads it for you.
+
+**AppImage.** `vibeseek-<version>-x86_64.AppImage` works on any distro with glibc 2.28 or newer (Ubuntu 20.04+, Debian 10+, Fedora 29+, Arch, …).
 
 1. Make it executable (`chmod +x vibeseek-*.AppImage`, or tick "allow executing" in the file manager), then double-click it or run it from a terminal. A double-click opens a terminal automatically.
 2. The first run starts `vibeseek setup`, which asks for:
    - a Soulseek username and password (new names are registered on first login)
    - folders to share
    - where downloads go
-   - how peers reach them: UPnP (automatic), ProtonVPN port forwarding, or a port they forward themselves
+   - how peers reach you: UPnP (automatic), ProtonVPN port forwarding, or a port you forward yourself
 3. Setup then downloads slskd from its official GitHub release, writes the configs, copies vibeseek to `~/.local/bin/vibeseek`, starts the background services, and checks that the login and port work.
 
-After that they just run `vibeseek`. UPnP needs the `miniupnpc` package (setup says so if it's missing). `vibeseek setup --uninstall` removes everything setup installed, but keeps downloads.
+After that, just run `vibeseek`. `vibeseek setup --uninstall` removes everything setup installed, but keeps downloads.
 
-To build the AppImage: `./packaging/build-appimage.sh`. The first build downloads zig, cargo-zigbuild and appimagetool into `.tools/`.
+**From source.** With a recent Rust toolchain:
+
+```
+git clone https://github.com/lunagoat/vibeseek && cd vibeseek
+cargo build --release
+./target/release/vibeseek setup
+```
+
+To build the AppImage yourself, run `./packaging/build-appimage.sh`. The first build downloads zig, cargo-zigbuild and appimagetool into `.tools/`.
+
+Optional tools, used when present:
+
+| Tool | Used for |
+|---|---|
+| `miniupnpc` (`upnpc`) | opening a port on your router via UPnP |
+| `libnatpmp` (`natpmpc`) | ProtonVPN port forwarding |
+| `yt-dlp` | YouTube playlists |
+| `libnotify` (`notify-send`) | desktop notifications when you become unreachable |
+| Dolphin | "open in Dolphin" in the TUI (other file managers work via `xdg-open`) |
 
 ## How it fits together
 
@@ -63,7 +83,7 @@ To build the AppImage: `./packaging/build-appimage.sh`. The first build download
 - `-f` limits file types: extensions (`-f mkv`, `-f dsf,flac`) or groups (`video`, `dsd`, `lossless`, `lossy`, `audio`). In the TUI, press `t`. Audio quality limits only apply to audio files, so `-f mkv` isn't filtered by bit depth, and DSD's 1-bit files aren't rejected.
 - `-a` groups results by folder, so `get` downloads the entire remote folder, cover art included
 - `-o <folder>` downloads anywhere; without it, files go to `~/Music/downloads/<source folder>/`
-- Ranking prefers hi-res FLAC (your sockseek `pref-*` values, in `[prefs]` in config.toml), peers with a free slot and short queue, and filenames that match your words
+- Ranking prefers hi-res FLAC (tunable in `[prefs]` in config.toml), peers with a free slot and short queue, and filenames that match your words
 
 In the TUI, press `/` to search and `Enter` to download. `v` toggles the files/folders view, `f` cycles filters, and `o` sets the output folder. Press `?` for all keys.
 
