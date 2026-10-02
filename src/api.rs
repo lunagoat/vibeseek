@@ -250,6 +250,14 @@ impl PrivateMessage {
     }
 }
 
+/// A shared folder: peers see it as `remote_path`, it lives at `local_path`.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Share {
+    pub local_path: String,
+    pub remote_path: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct QueueFile {
     pub filename: String,
@@ -434,6 +442,13 @@ impl Client {
     /// Rescan shared folders (after adding/removing files).
     pub async fn rescan_shares(&self) -> Result<()> {
         self.raw(Method::PUT, "/shares", None).await.map(|_| ())
+    }
+
+    /// Shared folders on this machine.
+    pub async fn shares(&self) -> Result<Vec<Share>> {
+        // Keyed by host; "local" is this slskd (others are relay agents).
+        let mut hosts: std::collections::HashMap<String, Vec<Share>> = self.req(Method::GET, "/shares", None).await?;
+        Ok(hosts.remove("local").unwrap_or_default())
     }
 
     pub async fn clear_completed_downloads(&self) -> Result<()> {

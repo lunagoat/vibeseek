@@ -1,8 +1,11 @@
 //! Permanent upload history (slskd forgets finished transfers after its retention window).
 //! Recorded by `vibeseek agent`, the TUI, and `vibeseek uploads`.
+//! Also remembers where each download batch was sent, for "open in Dolphin".
 
 use anyhow::Result;
 use rusqlite::{params, Connection};
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 use crate::api::Transfer;
 use crate::config::data_dir;
@@ -31,7 +34,10 @@ pub struct Row {
 
 impl History {
     pub fn open() -> Result<Self> {
-        let db = Connection::open(data_dir().join("history.db"))?;
+        Self::with(Connection::open(data_dir().join("history.db"))?)
+    }
+
+    fn with(db: Connection) -> Result<Self> {
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS uploads (
@@ -46,9 +52,29 @@ impl History {
                 ended_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS uploads_user ON uploads(username);
-            CREATE INDEX IF NOT EXISTS uploads_ended ON uploads(ended_at);",
+            CREATE INDEX IF NOT EXISTS uploads_ended ON uploads(ended_at);
+            CREATE TABLE IF NOT EXISTS destinations (
+                batch TEXT PRIMARY KEY,
+                dir TEXT NOT NULL,
+                queued_at TEXT NOT NULL
+            );",
         )?;
         Ok(Self { db })
+    }
+
+    /// Remember which folder a download batch was queued into (slskd doesn't report it back).
+    pub fn remember_destination(&self, batch: Uuid, dir: &Path) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO destinations (batch, dir, queued_at) VALUES (?1, ?2, ?3)",
+            params![batch.to_string(), dir.to_string_lossy(), chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn destination(&self, batch: Uuid) -> Result<Option<PathBuf>> {
+        let mut stmt = self.db.prepare_cached("SELECT dir FROM destinations WHERE batch = ?1")?;
+        let mut rows = stmt.query_map([batch.to_string()], |r| r.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?.map(PathBuf::from))
     }
 
     /// Record finished uploads. Returns how many were new.
@@ -133,5 +159,19 @@ impl History {
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn destinations_round_trip() {
+        let h = History::with(Connection::open_in_memory().unwrap()).unwrap();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        h.remember_destination(a, Path::new("/music/My Album")).unwrap();
+        assert_eq!(h.destination(a).unwrap(), Some(PathBuf::from("/music/My Album")));
+        assert_eq!(h.destination(b).unwrap(), None);
     }
 }

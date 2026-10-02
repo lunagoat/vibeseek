@@ -11,6 +11,7 @@ mod history;
 mod playlist;
 mod port;
 mod quality;
+mod reveal;
 mod search;
 mod setup;
 mod slskdcfg;

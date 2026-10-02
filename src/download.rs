@@ -74,7 +74,9 @@ pub async fn enqueue(client: &Client, cfg: &Config, username: &str, files: &[Sea
             let dl = cfg.downloads_dir();
             if let Ok(rel) = dir.strip_prefix(&dl) {
                 if !rel.as_os_str().is_empty() && !rel.starts_with(STAGING) {
-                    return client.enqueue(username, &q, Some(&rel.to_string_lossy())).await;
+                    let (batch, failures) = client.enqueue(username, &q, Some(&rel.to_string_lossy())).await?;
+                    remember_destination(batch, dir);
+                    return Ok((batch, failures));
                 }
             }
             let stage_rel = format!("{STAGING}/{}", Uuid::new_v4());
@@ -82,9 +84,15 @@ pub async fn enqueue(client: &Client, cfg: &Config, username: &str, files: &[Sea
             if failures.len() < files.len() {
                 register(PendingMove { batch, staging: dl.join(&stage_rel), target: dir.clone(), created: chrono::Utc::now() })?;
             }
+            remember_destination(batch, dir);
             Ok((batch, failures))
         }
     }
+}
+
+/// Note where a batch's files end up, so they can be found later (best effort).
+fn remember_destination(batch: Uuid, dir: &Path) {
+    let _ = crate::history::History::open().and_then(|h| h.remember_destination(batch, dir));
 }
 
 /// Fetch the complete contents of a remote folder (so album downloads include every track and

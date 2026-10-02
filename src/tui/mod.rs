@@ -589,6 +589,30 @@ impl App {
         }
     }
 
+    /// `o`: show the selected transfer's file in Dolphin.
+    fn open_selected(&mut self) {
+        let Some(t) = self.selected_transfer() else { return };
+        let (c, cfg) = (self.client.clone(), self.cfg.clone());
+        let up = self.tab == Tab::Uploads;
+        if !up && t.is_failed() {
+            self.say("that download failed, so there's no file to open (R retries it)");
+            return;
+        }
+        self.spawn_simple(async move {
+            let shares = if up { c.shares().await? } else { vec![] };
+            // Disk access (a sleeping or failing drive can be slow) stays off the UI thread.
+            tokio::task::spawn_blocking(move || {
+                let path = if up {
+                    crate::reveal::upload_path(&shares, &t).ok_or_else(|| anyhow::anyhow!("{} isn't in a shared folder any more", t.basename()))?
+                } else {
+                    crate::reveal::download_path(&cfg, &t)
+                };
+                crate::reveal::show(&path)
+            })
+            .await?
+        });
+    }
+
     fn retry_selected(&mut self) {
         let Some(t) = self.selected_transfer() else { return };
         if !t.is_failed() {
@@ -861,6 +885,7 @@ impl App {
                 Tab::Search => self.search_key(k),
                 Tab::Downloads => match k.code {
                     KeyCode::Char('c') => self.cancel_selected(),
+                    KeyCode::Char('o') => self.open_selected(),
                     KeyCode::Char('x') => self.clear_finished(),
                     KeyCode::Char('R') | KeyCode::Char('r') => self.retry_selected(),
                     KeyCode::Char('h') => self.toggle_hide(),
@@ -868,6 +893,7 @@ impl App {
                 },
                 Tab::Uploads => match k.code {
                     KeyCode::Char('c') => self.cancel_selected(),
+                    KeyCode::Char('o') => self.open_selected(),
                     KeyCode::Char('x') => self.clear_finished(),
                     KeyCode::Char('h') => self.toggle_hide(),
                     KeyCode::Char('b') => {
