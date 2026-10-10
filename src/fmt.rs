@@ -27,6 +27,11 @@ pub fn eta(remaining: u64, bps: f64) -> String {
     if bps <= 0.0 { "-".into() } else { duration((remaining as f64 / bps) as u64) }
 }
 
+/// A timestamp in local time, like "Oct 04 14:02"; empty when unknown.
+pub fn when(t: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    t.map(|d| d.with_timezone(&chrono::Local).format("%b %d %H:%M").to_string()).unwrap_or_default()
+}
+
 /// Truncate to a display width, keeping the *end* (the most specific part of a path).
 pub fn trunc_left(s: &str, width: usize) -> String {
     let w: usize = s.chars().map(|c| c.width().unwrap_or(0)).sum();

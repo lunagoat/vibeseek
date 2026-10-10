@@ -385,10 +385,16 @@ fn state_cell(t: &Transfer) -> Cell {
 
 fn render_transfers(list: &[Transfer], uploads: bool) -> String {
     let mut t = table();
-    header(&mut t, &["#", if uploads { "downloader" } else { "from" }, "state", "progress", "speed", "eta", "size", "file"]);
-    let w = term_width().saturating_sub(95).max(24);
+    // The finish time is left out on narrow terminals, where it would wrap the table.
+    let timed = term_width() >= 117;
+    let mut cols = vec!["#", if uploads { "downloader" } else { "from" }, "state", "progress", "speed", "eta", "size", "file"];
+    if timed {
+        cols.insert(7, if uploads { "uploaded" } else { "downloaded" });
+    }
+    header(&mut t, &cols);
+    let w = term_width().saturating_sub(if timed { 109 } else { 95 }).max(24);
     for (i, x) in list.iter().enumerate() {
-        t.add_row(vec![
+        let mut row = vec![
             Cell::new(i + 1).fg(Color::Cyan).set_alignment(CellAlignment::Right),
             Cell::new(fmt::trunc(&x.username, 18)),
             state_cell(x),
@@ -397,7 +403,12 @@ fn render_transfers(list: &[Transfer], uploads: bool) -> String {
             Cell::new(if x.is_active() { fmt::eta(x.size.saturating_sub(x.bytes_transferred), x.average_speed) } else { "".into() }),
             Cell::new(fmt::size(x.size)).set_alignment(CellAlignment::Right),
             Cell::new(fmt::trunc(x.basename(), w)),
-        ]);
+        ];
+        if timed {
+            // Blank while it's still queued or transferring.
+            row.insert(7, Cell::new(if x.is_finished() { fmt::when(x.ended_at) } else { String::new() }).fg(Color::DarkGrey));
+        }
+        t.add_row(row);
     }
     t.to_string()
 }
@@ -738,10 +749,6 @@ async fn cmd_port_check(cfg: &Config, open: bool) -> Result<()> {
     Ok(())
 }
 
-fn when(t: Option<chrono::DateTime<chrono::Utc>>) -> String {
-    t.map(|d| d.with_timezone(&chrono::Local).format("%b %d %H:%M").to_string()).unwrap_or_default()
-}
-
 async fn cmd_messages(cfg: &Config, user: Option<&str>, close: bool) -> Result<()> {
     let client = Client::new(cfg)?;
     if let Some(u) = user {
@@ -756,7 +763,7 @@ async fn cmd_messages(cfg: &Config, user: Option<&str>, close: bool) -> Result<(
         }
         for m in &msgs {
             let who = if m.is_incoming() { format!("\x1b[36m{u}\x1b[0m") } else { "\x1b[35myou\x1b[0m".into() };
-            println!("\x1b[2m{}\x1b[0m  {who}: {}", when(m.timestamp), m.message);
+            println!("\x1b[2m{}\x1b[0m  {who}: {}", fmt::when(m.timestamp), m.message);
         }
         client.ack_conversation(u).await.ok();
         return Ok(());
@@ -782,7 +789,7 @@ async fn cmd_messages(cfg: &Config, user: Option<&str>, close: bool) -> Result<(
         t.add_row(vec![
             if unread > 0 { Cell::new(&c.username).add_attribute(Attribute::Bold) } else { Cell::new(&c.username) },
             if unread > 0 { Cell::new(unread).fg(Color::Yellow) } else { Cell::new("") },
-            Cell::new(when(last.as_ref().and_then(|m| m.timestamp))).fg(Color::DarkGrey),
+            Cell::new(fmt::when(last.as_ref().and_then(|m| m.timestamp))).fg(Color::DarkGrey),
             Cell::new(fmt::trunc(&preview, w)),
         ]);
     }

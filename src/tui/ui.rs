@@ -255,7 +255,10 @@ fn state_style(t: &Transfer) -> Style {
 }
 
 fn transfer_table(list: &[Transfer], w: usize, uploads: bool) -> Table<'static> {
-    let name_w = w.saturating_sub(18 + 15 + 17 + 11 + 8 + 9 + 7).max(10);
+    let fixed = 18 + 15 + 17 + 11 + 8 + 9 + 7;
+    // The finish time is left out when it wouldn't leave a readable width for the file name.
+    let timed = w >= fixed + 13 + 16;
+    let name_w = w.saturating_sub(fixed + if timed { 13 } else { 0 }).max(10);
     let rows: Vec<Row> = list
         .iter()
         .map(|t| {
@@ -265,7 +268,7 @@ fn transfer_table(list: &[Transfer], w: usize, uploads: bool) -> Table<'static> 
             } else {
                 (String::new(), String::new())
             };
-            Row::new(vec![
+            let mut cells = vec![
                 Cell::from(fmt::trunc(&t.username, 17)),
                 Cell::from(fmt::trunc(&t.short_state(), 14)).style(st),
                 Cell::from(Line::from(vec![Span::styled(fmt::bar(t.percent_complete, 10), st), Span::raw(format!(" {:>3.0}%", t.percent_complete))])),
@@ -273,16 +276,22 @@ fn transfer_table(list: &[Transfer], w: usize, uploads: bool) -> Table<'static> 
                 Cell::from(eta).style(dim()),
                 Cell::from(format!("{:>8}", fmt::size(t.size))),
                 Cell::from(fmt::trunc(t.basename(), name_w)),
-            ])
+            ];
+            if timed {
+                // Blank while it's still queued or transferring.
+                let when = if t.is_finished() { fmt::when(t.ended_at) } else { String::new() };
+                cells.insert(6, Cell::from(when).style(dim()));
+            }
+            Row::new(cells)
         })
         .collect();
-    Table::new(
-        rows,
-        [Constraint::Length(18), Constraint::Length(15), Constraint::Length(16), Constraint::Length(11), Constraint::Length(8), Constraint::Length(9), Constraint::Min(10)],
-    )
-    .header(header(&[if uploads { "downloader" } else { "peer" }, "state", "progress", "speed", "eta", "size", "file"]))
-    .row_highlight_style(highlight())
-    .highlight_symbol("▌")
+    let mut widths = vec![Constraint::Length(18), Constraint::Length(15), Constraint::Length(16), Constraint::Length(11), Constraint::Length(8), Constraint::Length(9), Constraint::Min(10)];
+    let mut cols = vec![if uploads { "downloader" } else { "peer" }, "state", "progress", "speed", "eta", "size", "file"];
+    if timed {
+        widths.insert(6, Constraint::Length(12));
+        cols.insert(6, if uploads { "uploaded" } else { "downloaded" });
+    }
+    Table::new(rows, widths).header(header(&cols)).row_highlight_style(highlight()).highlight_symbol("▌")
 }
 
 fn render_transfers(f: &mut Frame, a: &mut App, r: Rect, uploads: bool) {
