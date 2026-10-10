@@ -46,6 +46,8 @@ pub enum Mode {
     ConfirmBan(String),
     /// "Clear N finished uploads/downloads?" (uploads?, count)
     ConfirmClear(bool, usize),
+    /// "Cancel N uploads to / downloads from USER?" (uploads?, user, count)
+    ConfirmCancelAll(bool, String, usize),
     UserDetail(String, Vec<history::Row>),
     /// Typing a private message to the open conversation.
     Compose(String),
@@ -283,14 +285,14 @@ fn is_old(t: &Transfer) -> bool {
     t.is_finished() && t.ended_at.map(|d| Utc::now() - d > chrono::Duration::minutes(10)).unwrap_or(true)
 }
 
-/// Active first, then queued, then finished; newest first within each group.
+/// The rows a transfer table shows, in display order (see `api::sort_transfers`).
 fn sorted_view(list: &[Transfer], hide_old: bool, cleared: Option<chrono::DateTime<Utc>>) -> Vec<Transfer> {
     let mut v: Vec<Transfer> = list
         .iter()
         .filter(|t| !(hide_old && is_old(t)) && !crate::clears::is_cleared(t, cleared))
         .cloned()
         .collect();
-    v.sort_by_key(|t| (if t.is_active() { 0 } else if !t.is_finished() { 1 } else { 2 }, std::cmp::Reverse(t.requested_at)));
+    api::sort_transfers(&mut v);
     v
 }
 
@@ -560,6 +562,40 @@ impl App {
         });
     }
 
+    /// `C`: ask before cancelling everything unfinished to/from the selected transfer's user.
+    fn cancel_user(&mut self) {
+        let Some(t) = self.selected_transfer() else { return };
+        let up = self.tab == Tab::Uploads;
+        let n = self.unfinished_for(up, &t.username).len();
+        if n == 0 {
+            self.say(format!("nothing in progress or queued {} {}", if up { "to" } else { "from" }, t.username));
+            return;
+        }
+        self.mode = Mode::ConfirmCancelAll(up, t.username, n);
+    }
+
+    fn unfinished_for(&self, uploads: bool, user: &str) -> Vec<Transfer> {
+        let list = if uploads { &self.uploads } else { &self.downloads };
+        list.iter().filter(|t| t.username == user && !t.is_finished()).cloned().collect()
+    }
+
+    fn do_cancel_user(&mut self, uploads: bool, user: String) {
+        let targets = self.unfinished_for(uploads, &user);
+        let c = self.client.clone();
+        self.spawn_simple(async move {
+            let mut failed = 0;
+            for t in &targets {
+                let r = if uploads { c.cancel_upload(t, false).await } else { c.cancel_download(t, false).await };
+                failed += r.is_err() as usize;
+            }
+            let what = if uploads { format!("uploads to {user}") } else { format!("downloads from {user}") };
+            if failed > 0 {
+                anyhow::bail!("cancelled {} {what}, but {failed} couldn't be cancelled", targets.len() - failed);
+            }
+            Ok(format!("cancelled {} {what}", targets.len()))
+        });
+    }
+
     /// `x`: ask before clearing finished transfers from the current list.
     fn clear_finished(&mut self) {
         let up = self.tab == Tab::Uploads;
@@ -790,6 +826,14 @@ impl App {
                 }
                 return false;
             }
+            Mode::ConfirmCancelAll(uploads, user, _) => {
+                let (uploads, user) = (*uploads, user.clone());
+                self.mode = Mode::Normal;
+                if matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+                    self.do_cancel_user(uploads, user);
+                }
+                return false;
+            }
             Mode::ConfirmBan(user) => {
                 let user = user.clone();
                 self.mode = Mode::Normal;
@@ -885,6 +929,7 @@ impl App {
                 Tab::Search => self.search_key(k),
                 Tab::Downloads => match k.code {
                     KeyCode::Char('c') => self.cancel_selected(),
+                    KeyCode::Char('C') => self.cancel_user(),
                     KeyCode::Char('o') => self.open_selected(),
                     KeyCode::Char('x') => self.clear_finished(),
                     KeyCode::Char('R') | KeyCode::Char('r') => self.retry_selected(),
@@ -893,6 +938,7 @@ impl App {
                 },
                 Tab::Uploads => match k.code {
                     KeyCode::Char('c') => self.cancel_selected(),
+                    KeyCode::Char('C') => self.cancel_user(),
                     KeyCode::Char('o') => self.open_selected(),
                     KeyCode::Char('x') => self.clear_finished(),
                     KeyCode::Char('h') => self.toggle_hide(),

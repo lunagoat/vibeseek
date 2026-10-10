@@ -427,8 +427,7 @@ async fn fetch(client: &Client, uploads: bool, all: bool) -> Result<Vec<Transfer
             !crate::clears::is_cleared(t, mark) && (!t.is_finished() || t.ended_at.map(|e| e > cutoff).unwrap_or(false))
         });
     }
-    // Active first, then queued, then finished.
-    list.sort_by_key(|t| (if t.is_active() { 0 } else if !t.is_finished() { 1 } else { 2 }, std::cmp::Reverse(t.requested_at)));
+    api::sort_transfers(&mut list);
     Ok(list)
 }
 

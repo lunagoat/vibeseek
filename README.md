@@ -131,6 +131,10 @@ vibeseek playlist "https://www.youtube.com/playlist?list=…"    # YouTube / You
 
 `vibeseek uploads` shows active and queued uploads (`-w` for a live view, `--all` for finished ones too). `vibeseek uploads cancel 2`, `… cancel user:NAME`, `vibeseek ban NAME`, and `vibeseek uploads clear` manage them.
 
+Both lists show active transfers first, then queued, then finished, newest first. Files someone took together from one folder (an album) are kept together in track order, since peers' clients request tracks in no particular order.
+
+In the Uploads and Downloads tabs, `c` cancels the selected file, and `C` cancels everything still transferring or queued for that file's user (it asks first).
+
 To tidy the lists, press `x` in the Uploads or Downloads tab (or run `vibeseek uploads clear` / `vibeseek downloads clear`). It asks first, and only hides transfers that have finished; active and queued ones stay. Cleared uploads remain in your history and in `vibeseek uploads --all`. Otherwise the lists keep everything: nothing is cleared automatically.
 
 Press `o` in the Uploads or Downloads tab to open Dolphin with the selected file highlighted. Uploads are found through your shared folders; downloads in the folder they were queued into. If the file itself is gone (renamed, or not downloaded yet) its folder opens instead. Without Dolphin, the folder opens in your default file manager.

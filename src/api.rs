@@ -221,6 +221,75 @@ pub fn flatten(users: Vec<UserTransfers>) -> Vec<Transfer> {
     out
 }
 
+/// Display order for the transfer lists: active first, then queued, then finished, newest
+/// first within each. Files someone took together from one folder (an album) stay together in
+/// track order, because peers request the tracks in whatever order their client likes.
+pub fn sort_transfers(list: &mut [Transfer]) {
+    list.sort_by_key(|t| (state_rank(t), std::cmp::Reverse(t.requested_at)));
+    let mut start = 0;
+    while start < list.len() {
+        let mut end = start + 1;
+        while end < list.len() && same_batch(&list[end - 1], &list[end]) {
+            end += 1;
+        }
+        list[start..end].sort_by(|a, b| natural_cmp(a.basename(), b.basename()));
+        start = end;
+    }
+}
+
+fn state_rank(t: &Transfer) -> u8 {
+    if t.is_active() {
+        0
+    } else if !t.is_finished() {
+        1
+    } else {
+        2
+    }
+}
+
+/// Neighbours in the list that were requested together: same person, same folder, same state
+/// group, within a minute of each other.
+fn same_batch(a: &Transfer, b: &Transfer) -> bool {
+    let together = match (a.requested_at, b.requested_at) {
+        (Some(x), Some(y)) => (x - y).abs() <= chrono::Duration::seconds(60),
+        (None, None) => true,
+        _ => false,
+    };
+    together && a.username == b.username && state_rank(a) == state_rank(b) && dirname(&a.filename) == dirname(&b.filename)
+}
+
+/// Compare names like a file manager: ignoring case, and numbers by value ("2" before "10").
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering::*;
+    let digits = |it: &mut std::iter::Peekable<std::str::Chars>| {
+        let mut n = String::new();
+        while let Some(c) = it.next_if(|c| c.is_ascii_digit()) {
+            n.push(c);
+        }
+        n.trim_start_matches('0').to_string()
+    };
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        let ord = match (x.peek().copied(), y.peek().copied()) {
+            (None, None) => return a.cmp(b),
+            (None, _) => return Less,
+            (_, None) => return Greater,
+            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
+                let (n, m) = (digits(&mut x), digits(&mut y));
+                n.len().cmp(&m.len()).then(n.cmp(&m))
+            }
+            (Some(c), Some(d)) => {
+                x.next();
+                y.next();
+                c.to_lowercase().cmp(d.to_lowercase())
+            }
+        };
+        if ord != Equal {
+            return ord;
+        }
+    }
+}
+
 /// A private-message conversation.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -493,4 +562,40 @@ fn enc(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn t(user: &str, file: &str, state: &str, requested: &str) -> Transfer {
+        serde_json::from_value(json!({ "id": Uuid::new_v4(), "username": user, "filename": file, "state": state, "requestedAt": requested })).unwrap()
+    }
+
+    fn names(list: &[Transfer]) -> Vec<&str> {
+        list.iter().map(|t| t.basename()).collect()
+    }
+
+    #[test]
+    fn albums_read_in_track_order_newest_first() {
+        let done = "Completed, Succeeded";
+        let mut list = vec![
+            // An album requested in a scrambled order, all within a few ms.
+            t("ann", "Music\\Kid A\\07. In Limbo.dsf", done, "2026-10-04T02:14:39.780"),
+            t("ann", "Music\\Kid A\\01. Everything.dsf", done, "2026-10-04T02:14:40.001"),
+            t("ann", "Music\\Kid A\\10. Motion Picture.dsf", done, "2026-10-04T02:14:40.012"),
+            t("ann", "Music\\Kid A\\2. Kid A.dsf", done, "2026-10-04T02:14:40.005"),
+            // Someone else, earlier.
+            t("bob", "Music\\Other\\single.flac", done, "2026-10-04T01:58:26"),
+            // The same person taking one of those tracks again much later is its own entry.
+            t("ann", "Music\\Kid A\\07. In Limbo.dsf", done, "2026-10-04T05:00:00"),
+            // Still transferring: always on top.
+            t("cat", "Music\\Z\\zz.flac", "InProgress", "2026-10-03T00:00:00"),
+        ];
+        sort_transfers(&mut list);
+        assert_eq!(
+            names(&list),
+            ["zz.flac", "07. In Limbo.dsf", "01. Everything.dsf", "2. Kid A.dsf", "07. In Limbo.dsf", "10. Motion Picture.dsf", "single.flac"]
+        );
+    }
 }

@@ -103,8 +103,8 @@ fn render_bottom(f: &mut Frame, a: &App, r: Rect) {
         (Mode::SearchInput, _) => "Enter search  Esc results  Ctrl-U clear",
         (Mode::OutputPrompt(_), _) => "Enter set folder (empty = default)  Esc cancel",
         (_, Tab::Search) => "/ search  Enter download  a whole folder  f filter  t file types  v files/folders  s sort  o output folder  ? help",
-        (_, Tab::Downloads) => "o open in Dolphin  c cancel  R retry failed  x clear finished  h show/hide old  ? help",
-        (_, Tab::Uploads) => "Enter user details  o open in Dolphin  b ban  c cancel  x clear finished  h hide/show old  ? help",
+        (_, Tab::Downloads) => "o open in Dolphin  c cancel  C cancel all from user  R retry failed  x clear finished  h show/hide old  ? help",
+        (_, Tab::Uploads) => "Enter user details  o open in Dolphin  c cancel  C cancel all to user  b ban  x clear finished  h hide/show old  ? help",
         (Mode::Compose(_), _) => "Enter send  Esc cancel  Ctrl-U clear",
         (Mode::TypesPrompt(_), _) => "Enter apply (empty = preset's types)  Esc cancel  Ctrl-U clear",
         (Mode::NewConversation(_), _) => "type a username, Enter to start writing  Esc cancel",
@@ -553,7 +553,8 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
                 ("", ""),
                 ("Downloads / Uploads", ""),
                 ("o", "show the selected file in Dolphin"),
-                ("c", "cancel selected"),
+                ("c", "cancel the selected file"),
+                ("C", "cancel all current transfers with that user"),
                 ("x", "clear finished from the list (asks first; uploads stay in history)"),
                 ("h", "show / hide finished transfers older than 10 min"),
                 ("R", "retry failed download"),
@@ -609,6 +610,20 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
                 Line::from(Span::styled("Active and queued transfers stay.   y / n", dim())),
             ];
             f.render_widget(Paragraph::new(text).block(block(format!("Clear {what}"))), r);
+        }
+        Mode::ConfirmCancelAll(uploads, user, n) => {
+            let r = centered(area, 64, 5);
+            f.render_widget(Clear, r);
+            let (what, note) = if *uploads {
+                (format!("Cancel {n} upload(s) to "), "They can ask for the files again (b bans instead).  y / n")
+            } else {
+                (format!("Cancel {n} download(s) from "), "R retries a cancelled download later.  y / n")
+            };
+            let text = vec![
+                Line::from(vec![Span::raw(what), Span::styled(user.clone(), Style::default().fg(Color::Red).bold()), Span::raw("?")]),
+                Line::from(Span::styled(note, dim())),
+            ];
+            f.render_widget(Paragraph::new(text).block(block("Cancel all")), r);
         }
         Mode::ConfirmBan(user) => {
             let r = centered(area, 56, 5);
