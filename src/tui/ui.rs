@@ -258,7 +258,7 @@ fn transfer_table(list: &[Transfer], w: usize, uploads: bool) -> Table<'static> 
     // Column widths: peer, state, progress, speed, eta, size, finish time; the file name takes
     // the rest. On a narrow terminal the others give way until the name is readable: the bar
     // becomes a bare percentage, eta goes, peer and state tighten, and speed goes last.
-    let mut cw = [18usize, 15, 16, 11, 8, 9, 12];
+    let mut cw = [18usize, 15, 16, 11, 8, 9, 18];
     let used = |cw: &[usize; 7]| cw.iter().filter(|&&c| c > 0).map(|c| c + 1).sum::<usize>() + 2;
     for (col, narrow) in [(2, 4), (4, 0), (0, 14), (1, 13), (3, 0)] {
         if w >= used(&cw) + 16 {
@@ -280,7 +280,7 @@ fn transfer_table(list: &[Transfer], w: usize, uploads: bool) -> Table<'static> 
             let pct = format!("{:>3.0}%", t.percent_complete);
             let progress = if bar { Cell::from(Line::from(vec![Span::styled(fmt::bar(t.percent_complete, 10), st), Span::raw(format!(" {pct}"))])) } else { Cell::from(pct) };
             // Blank while it's still queued or transferring.
-            let when = if t.is_finished() { fmt::when(t.ended_at) } else { String::new() };
+            let when = if t.is_finished() { fmt::ended(t.ended_at) } else { String::new() };
             let cells = [
                 Cell::from(fmt::trunc(&t.username, cw[0] - 1)),
                 Cell::from(fmt::trunc(&t.short_state(), cw[1] - 1)).style(st),
@@ -652,7 +652,7 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
         Mode::UserDetail(user, rows) => {
             let current: Vec<&Transfer> = a.uploads_raw().iter().filter(|t| &t.username == user).collect();
             let total: u64 = rows.iter().filter(|x| x.state.ends_with("Succeeded")).map(|x| x.bytes).sum();
-            let r = centered(area, 116, 30);
+            let r = centered(area, 122, 30);
             f.render_widget(Clear, r);
             let [head, cur_r, hist_r] =
                 Layout::vertical([Constraint::Length(2), Constraint::Length(current.len().min(8) as u16 + 3), Constraint::Min(3)]).areas(block("").inner(r));

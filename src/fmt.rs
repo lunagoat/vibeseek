@@ -32,6 +32,11 @@ pub fn when(t: Option<chrono::DateTime<chrono::Utc>>) -> String {
     t.map(|d| d.with_timezone(&chrono::Local).format("%b %d %H:%M").to_string()).unwrap_or_default()
 }
 
+/// When a transfer ended, in local time, like "Oct 04 02:02:07 pm"; empty when unknown.
+pub fn ended(t: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    t.map(|d| d.with_timezone(&chrono::Local).format("%b %d %I:%M:%S %P").to_string()).unwrap_or_default()
+}
+
 /// Truncate to a display width, keeping the *end* (the most specific part of a path).
 pub fn trunc_left(s: &str, width: usize) -> String {
     let w: usize = s.chars().map(|c| c.width().unwrap_or(0)).sum();

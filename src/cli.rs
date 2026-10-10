@@ -388,9 +388,9 @@ fn render_transfers(list: &[Transfer], uploads: bool) -> String {
     // On a narrow terminal the progress bar becomes a bare percentage, then eta and speed go,
     // so the finish time and the file name still fit without wrapping.
     let tw = term_width();
-    let (bar, eta, speed) = (tw >= 133, tw >= 120, tw >= 111);
+    let (bar, eta, speed) = (tw >= 139, tw >= 126, tw >= 117);
     let mut cols = vec!["#", if uploads { "downloader" } else { "from" }, "state", if bar { "progress" } else { "%" }, "speed", "eta", "size", if uploads { "uploaded" } else { "downloaded" }, "file"];
-    let w = tw.saturating_sub(109 - if bar { 0 } else { 13 } - if eta { 0 } else { 9 } - if speed { 0 } else { 12 }).max(24);
+    let w = tw.saturating_sub(115 - if bar { 0 } else { 13 } - if eta { 0 } else { 9 } - if speed { 0 } else { 12 }).max(24);
     fn trim<T>(v: &mut Vec<T>, eta: bool, speed: bool) {
         if !eta {
             v.remove(5);
@@ -412,7 +412,7 @@ fn render_transfers(list: &[Transfer], uploads: bool) -> String {
             Cell::new(if x.is_active() { fmt::eta(x.size.saturating_sub(x.bytes_transferred), x.average_speed) } else { "".into() }),
             Cell::new(fmt::size(x.size)).set_alignment(CellAlignment::Right),
             // Blank while it's still queued or transferring.
-            Cell::new(if x.is_finished() { fmt::when(x.ended_at) } else { String::new() }).fg(Color::DarkGrey),
+            Cell::new(if x.is_finished() { fmt::ended(x.ended_at) } else { String::new() }).fg(Color::DarkGrey),
             Cell::new(fmt::trunc(x.basename(), w)),
         ];
         trim(&mut row, eta, speed);
