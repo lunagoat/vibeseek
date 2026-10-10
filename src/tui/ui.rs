@@ -255,10 +255,19 @@ fn state_style(t: &Transfer) -> Style {
 }
 
 fn transfer_table(list: &[Transfer], w: usize, uploads: bool) -> Table<'static> {
-    let fixed = 18 + 15 + 17 + 11 + 8 + 9 + 7;
-    // The finish time is left out when it wouldn't leave a readable width for the file name.
-    let timed = w >= fixed + 13 + 16;
-    let name_w = w.saturating_sub(fixed + if timed { 13 } else { 0 }).max(10);
+    // Column widths: peer, state, progress, speed, eta, size, finish time; the file name takes
+    // the rest. On a narrow terminal the others give way until the name is readable: the bar
+    // becomes a bare percentage, eta goes, peer and state tighten, and speed goes last.
+    let mut cw = [18usize, 15, 16, 11, 8, 9, 12];
+    let used = |cw: &[usize; 7]| cw.iter().filter(|&&c| c > 0).map(|c| c + 1).sum::<usize>() + 2;
+    for (col, narrow) in [(2, 4), (4, 0), (0, 14), (1, 13), (3, 0)] {
+        if w >= used(&cw) + 16 {
+            break;
+        }
+        cw[col] = narrow;
+    }
+    let bar = cw[2] > 4;
+    let name_w = w.saturating_sub(used(&cw)).max(10);
     let rows: Vec<Row> = list
         .iter()
         .map(|t| {
@@ -268,29 +277,26 @@ fn transfer_table(list: &[Transfer], w: usize, uploads: bool) -> Table<'static> 
             } else {
                 (String::new(), String::new())
             };
-            let mut cells = vec![
-                Cell::from(fmt::trunc(&t.username, 17)),
-                Cell::from(fmt::trunc(&t.short_state(), 14)).style(st),
-                Cell::from(Line::from(vec![Span::styled(fmt::bar(t.percent_complete, 10), st), Span::raw(format!(" {:>3.0}%", t.percent_complete))])),
+            let pct = format!("{:>3.0}%", t.percent_complete);
+            let progress = if bar { Cell::from(Line::from(vec![Span::styled(fmt::bar(t.percent_complete, 10), st), Span::raw(format!(" {pct}"))])) } else { Cell::from(pct) };
+            // Blank while it's still queued or transferring.
+            let when = if t.is_finished() { fmt::when(t.ended_at) } else { String::new() };
+            let cells = [
+                Cell::from(fmt::trunc(&t.username, cw[0] - 1)),
+                Cell::from(fmt::trunc(&t.short_state(), cw[1] - 1)).style(st),
+                progress,
                 Cell::from(speed),
                 Cell::from(eta).style(dim()),
                 Cell::from(format!("{:>8}", fmt::size(t.size))),
-                Cell::from(fmt::trunc(t.basename(), name_w)),
+                Cell::from(when).style(dim()),
             ];
-            if timed {
-                // Blank while it's still queued or transferring.
-                let when = if t.is_finished() { fmt::when(t.ended_at) } else { String::new() };
-                cells.insert(6, Cell::from(when).style(dim()));
-            }
-            Row::new(cells)
+            let shown = cells.into_iter().zip(cw).filter(|(_, c)| *c > 0).map(|(cell, _)| cell);
+            Row::new(shown.chain([Cell::from(fmt::trunc(t.basename(), name_w))]))
         })
         .collect();
-    let mut widths = vec![Constraint::Length(18), Constraint::Length(15), Constraint::Length(16), Constraint::Length(11), Constraint::Length(8), Constraint::Length(9), Constraint::Min(10)];
-    let mut cols = vec![if uploads { "downloader" } else { "peer" }, "state", "progress", "speed", "eta", "size", "file"];
-    if timed {
-        widths.insert(6, Constraint::Length(12));
-        cols.insert(6, if uploads { "uploaded" } else { "downloaded" });
-    }
+    let cols = [if uploads { "downloader" } else { "peer" }, "state", if bar { "progress" } else { "%" }, "speed", "eta", "size", if uploads { "uploaded" } else { "downloaded" }];
+    let cols: Vec<&str> = cols.into_iter().zip(cw).filter(|(_, c)| *c > 0).map(|(h, _)| h).chain(["file"]).collect();
+    let widths = cw.into_iter().filter(|c| *c > 0).map(|c| Constraint::Length(c as u16)).chain([Constraint::Min(10)]);
     Table::new(rows, widths).header(header(&cols)).row_highlight_style(highlight()).highlight_symbol("▌")
 }
 
@@ -646,7 +652,7 @@ fn render_popup(f: &mut Frame, a: &App, area: Rect) {
         Mode::UserDetail(user, rows) => {
             let current: Vec<&Transfer> = a.uploads_raw().iter().filter(|t| &t.username == user).collect();
             let total: u64 = rows.iter().filter(|x| x.state.ends_with("Succeeded")).map(|x| x.bytes).sum();
-            let r = centered(area, 100, 30);
+            let r = centered(area, 116, 30);
             f.render_widget(Clear, r);
             let [head, cur_r, hist_r] =
                 Layout::vertical([Constraint::Length(2), Constraint::Length(current.len().min(8) as u16 + 3), Constraint::Min(3)]).areas(block("").inner(r));

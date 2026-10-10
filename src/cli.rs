@@ -385,29 +385,37 @@ fn state_cell(t: &Transfer) -> Cell {
 
 fn render_transfers(list: &[Transfer], uploads: bool) -> String {
     let mut t = table();
-    // The finish time is left out on narrow terminals, where it would wrap the table.
-    let timed = term_width() >= 117;
-    let mut cols = vec!["#", if uploads { "downloader" } else { "from" }, "state", "progress", "speed", "eta", "size", "file"];
-    if timed {
-        cols.insert(7, if uploads { "uploaded" } else { "downloaded" });
+    // On a narrow terminal the progress bar becomes a bare percentage, then eta and speed go,
+    // so the finish time and the file name still fit without wrapping.
+    let tw = term_width();
+    let (bar, eta, speed) = (tw >= 133, tw >= 120, tw >= 111);
+    let mut cols = vec!["#", if uploads { "downloader" } else { "from" }, "state", if bar { "progress" } else { "%" }, "speed", "eta", "size", if uploads { "uploaded" } else { "downloaded" }, "file"];
+    let w = tw.saturating_sub(109 - if bar { 0 } else { 13 } - if eta { 0 } else { 9 } - if speed { 0 } else { 12 }).max(24);
+    fn trim<T>(v: &mut Vec<T>, eta: bool, speed: bool) {
+        if !eta {
+            v.remove(5);
+        }
+        if !speed {
+            v.remove(4);
+        }
     }
+    trim(&mut cols, eta, speed);
     header(&mut t, &cols);
-    let w = term_width().saturating_sub(if timed { 109 } else { 95 }).max(24);
     for (i, x) in list.iter().enumerate() {
+        let pct = format!("{:>3.0}%", x.percent_complete);
         let mut row = vec![
             Cell::new(i + 1).fg(Color::Cyan).set_alignment(CellAlignment::Right),
             Cell::new(fmt::trunc(&x.username, 18)),
             state_cell(x),
-            Cell::new(format!("{} {:>3.0}%", fmt::bar(x.percent_complete, 12), x.percent_complete)),
+            Cell::new(if bar { format!("{} {pct}", fmt::bar(x.percent_complete, 12)) } else { pct }),
             Cell::new(if x.is_active() { fmt::speed(x.average_speed) } else { "-".into() }),
             Cell::new(if x.is_active() { fmt::eta(x.size.saturating_sub(x.bytes_transferred), x.average_speed) } else { "".into() }),
             Cell::new(fmt::size(x.size)).set_alignment(CellAlignment::Right),
+            // Blank while it's still queued or transferring.
+            Cell::new(if x.is_finished() { fmt::when(x.ended_at) } else { String::new() }).fg(Color::DarkGrey),
             Cell::new(fmt::trunc(x.basename(), w)),
         ];
-        if timed {
-            // Blank while it's still queued or transferring.
-            row.insert(7, Cell::new(if x.is_finished() { fmt::when(x.ended_at) } else { String::new() }).fg(Color::DarkGrey));
-        }
+        trim(&mut row, eta, speed);
         t.add_row(row);
     }
     t.to_string()

@@ -131,7 +131,7 @@ vibeseek playlist "https://www.youtube.com/playlist?list=…"    # YouTube / You
 
 `vibeseek uploads` shows active and queued uploads (`-w` for a live view, `--all` for finished ones too). `vibeseek uploads cancel 2`, `… cancel user:NAME`, `vibeseek ban NAME`, and `vibeseek uploads clear` manage them.
 
-Both lists show active transfers first, then queued, then finished, newest first. Files someone took together from one folder (an album) are kept together in track order, since peers' clients request tracks in no particular order. Finished transfers show when they ended in an `uploaded` / `downloaded` column (left out when the terminal is narrower than about 117 columns).
+Both lists show active transfers first, then queued, then finished, newest first. Files someone took together from one folder (an album) are kept together in track order, since peers' clients request tracks in no particular order. Finished transfers show when they ended in an `uploaded` / `downloaded` column. On a narrow terminal the progress bar shrinks to a percentage and then the eta and speed columns go, so the time and the file name still fit.
 
 In the Uploads and Downloads tabs, `c` cancels the selected file, and `C` cancels everything still transferring or queued for that file's user (it asks first).
 
